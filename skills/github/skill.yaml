@@ -1,0 +1,11 @@
+name: github
+version: 0.1.0
+description: Coordinate repository, issue, and release workflows.
+permissions:
+  - read:workspace
+  - write:artifacts
+entrypoints:
+  - prompt.md
+dependencies: []
+source:
+  type: local

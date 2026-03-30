@@ -1,0 +1,54 @@
+name: software-team
+description: Launch a public-facing software delivery team with auto-installed skills.
+skills:
+  - name: github
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/github
+  - name: research-kit
+    version: ">=0.1.0"
+    source:
+      type: registry
+      registry: builtin
+agents:
+  - name: captain
+    role: captain
+    goal: Own the release quality, sequencing, and final delivery.
+    allowed_tools: [run, summarize]
+    required_skills: [github]
+    delegation_policy:
+      max_depth: 2
+      allow_peer_delegation: false
+      require_artifacts: true
+  - name: planner
+    role: planner
+    goal: Break the task into executable steps.
+    allowed_tools: [plan]
+  - name: researcher
+    role: researcher
+    goal: Surface external dependencies and launch risks.
+    allowed_tools: [research]
+    required_skills: [research-kit]
+  - name: coder
+    role: coder
+    goal: Shape the minimum implementation path.
+    allowed_tools: [implement]
+    required_skills: [github]
+  - name: reviewer
+    role: reviewer
+    goal: Review final quality and readiness.
+    allowed_tools: [review]
+channels:
+  - kind: cli
+    enabled: true
+  - kind: telegram
+    enabled: false
+  - kind: feishu
+    enabled: false
+policies:
+  allow_external_skill_install: true
+  require_approval_for_external_skills: true
+budget:
+  max_delegations: 8
+  max_tokens: 120000

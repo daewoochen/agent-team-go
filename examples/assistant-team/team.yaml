@@ -1,0 +1,42 @@
+name: assistant-team
+description: Coordinate incoming requests and route them to the right specialists.
+skills:
+  - name: telegram-messenger
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/telegram-messenger
+  - name: feishu-messenger
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/feishu-messenger
+agents:
+  - name: captain
+    role: captain
+    goal: Receive requests and coordinate specialists.
+    allowed_tools: [route, summarize]
+  - name: planner
+    role: planner
+    goal: Turn requests into structured work items.
+    allowed_tools: [plan]
+  - name: researcher
+    role: researcher
+    goal: Pull facts together before a response goes out.
+    allowed_tools: [research]
+channels:
+  - kind: cli
+    enabled: true
+  - kind: telegram
+    enabled: false
+    token: ""
+  - kind: feishu
+    enabled: false
+    app_id: ""
+    app_secret: ""
+policies:
+  allow_external_skill_install: true
+  require_approval_for_external_skills: true
+budget:
+  max_delegations: 6
+  max_tokens: 80000

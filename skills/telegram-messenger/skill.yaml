@@ -1,0 +1,10 @@
+name: telegram-messenger
+version: 0.1.0
+description: Deliver updates to Telegram and validate Telegram channel expectations.
+permissions:
+  - send:message
+entrypoints:
+  - prompt.md
+dependencies: []
+source:
+  type: local

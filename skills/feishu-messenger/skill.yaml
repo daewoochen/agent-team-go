@@ -1,0 +1,10 @@
+name: feishu-messenger
+version: 0.1.0
+description: Deliver updates to Feishu and validate Feishu channel expectations.
+permissions:
+  - send:message
+entrypoints:
+  - prompt.md
+dependencies: []
+source:
+  type: local

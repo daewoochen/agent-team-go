@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" fill="none">
+  <rect width="1280" height="640" fill="#0B1020"/>
+  <rect x="60" y="60" width="1160" height="520" rx="32" fill="#101A33" stroke="#2AD4B1" stroke-width="2"/>
+  <circle cx="170" cy="170" r="36" fill="#2AD4B1"/>
+  <circle cx="310" cy="320" r="28" fill="#4AA8FF"/>
+  <circle cx="470" cy="210" r="28" fill="#FFB84D"/>
+  <circle cx="620" cy="370" r="28" fill="#FF6B81"/>
+  <circle cx="820" cy="240" r="28" fill="#9D7CFF"/>
+  <circle cx="1010" cy="340" r="36" fill="#2AD4B1"/>
+  <path d="M170 170L310 320L470 210L620 370L820 240L1010 340" stroke="url(#paint0_linear)" stroke-width="8" stroke-linecap="round"/>
+  <text x="120" y="470" fill="#F8FAFC" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="700">agent-team-go</text>
+  <text x="120" y="530" fill="#A9BCD8" font-family="Arial, Helvetica, sans-serif" font-size="30">Build and run AI-native agent teams in Go</text>
+  <defs>
+    <linearGradient id="paint0_linear" x1="170" y1="170" x2="1010" y2="340" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2AD4B1"/>
+      <stop offset="1" stop-color="#4AA8FF"/>
+    </linearGradient>
+  </defs>
+</svg>

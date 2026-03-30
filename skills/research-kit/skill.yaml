@@ -1,0 +1,10 @@
+name: research-kit
+version: 0.1.0
+description: Gather facts, assumptions, and launch risks for a task.
+permissions:
+  - read:workspace
+entrypoints:
+  - prompt.md
+dependencies: []
+source:
+  type: local

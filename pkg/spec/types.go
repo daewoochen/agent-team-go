@@ -1,0 +1,177 @@
+package spec
+
+import (
+	"fmt"
+	"strings"
+)
+
+type TeamSpec struct {
+	Name        string             `yaml:"name"`
+	Description string             `yaml:"description"`
+	Agents      []AgentSpec        `yaml:"agents"`
+	Skills      []SkillRequirement `yaml:"skills"`
+	Channels    []ChannelConfig    `yaml:"channels"`
+	Policies    PolicySpec         `yaml:"policies"`
+	Memory      MemoryConfig       `yaml:"memory"`
+	Budget      BudgetConfig       `yaml:"budget"`
+	BaseDir     string             `yaml:"-"`
+	SourcePath  string             `yaml:"-"`
+}
+
+type AgentSpec struct {
+	Name             string            `yaml:"name"`
+	Role             string            `yaml:"role"`
+	Goal             string            `yaml:"goal"`
+	AllowedTools     []string          `yaml:"allowed_tools"`
+	RequiredSkills   []string          `yaml:"required_skills"`
+	DelegationPolicy DelegationPolicy  `yaml:"delegation_policy"`
+	Metadata         map[string]string `yaml:"metadata"`
+}
+
+type DelegationPolicy struct {
+	MaxDepth            int  `yaml:"max_depth"`
+	AllowPeerDelegation bool `yaml:"allow_peer_delegation"`
+	RequireArtifacts    bool `yaml:"require_artifacts"`
+}
+
+type SkillRequirement struct {
+	Name    string      `yaml:"name"`
+	Version string      `yaml:"version"`
+	Source  SkillSource `yaml:"source"`
+}
+
+type SkillSource struct {
+	Type     string `yaml:"type"`
+	Path     string `yaml:"path,omitempty"`
+	URL      string `yaml:"url,omitempty"`
+	Ref      string `yaml:"ref,omitempty"`
+	Registry string `yaml:"registry,omitempty"`
+}
+
+type ChannelConfig struct {
+	Kind              string   `yaml:"kind"`
+	Enabled           bool     `yaml:"enabled"`
+	Token             string   `yaml:"token,omitempty"`
+	AllowFrom         []string `yaml:"allow_from,omitempty"`
+	AppID             string   `yaml:"app_id,omitempty"`
+	AppSecret         string   `yaml:"app_secret,omitempty"`
+	EncryptKey        string   `yaml:"encrypt_key,omitempty"`
+	VerificationToken string   `yaml:"verification_token,omitempty"`
+	Mode              string   `yaml:"mode,omitempty"`
+}
+
+type PolicySpec struct {
+	AllowExternalSkillInstall   bool `yaml:"allow_external_skill_install"`
+	RequireApprovalForExtSkills bool `yaml:"require_approval_for_external_skills"`
+}
+
+type MemoryConfig struct {
+	Backend string `yaml:"backend"`
+	Path    string `yaml:"path"`
+}
+
+type BudgetConfig struct {
+	MaxDelegations int `yaml:"max_delegations"`
+	MaxTokens      int `yaml:"max_tokens"`
+}
+
+func (t *TeamSpec) Validate() error {
+	if strings.TrimSpace(t.Name) == "" {
+		return fmt.Errorf("team name is required")
+	}
+	if len(t.Agents) == 0 {
+		return fmt.Errorf("at least one agent is required")
+	}
+
+	names := map[string]struct{}{}
+	hasCaptain := false
+	for _, agent := range t.Agents {
+		if strings.TrimSpace(agent.Name) == "" {
+			return fmt.Errorf("agent name is required")
+		}
+		if strings.TrimSpace(agent.Role) == "" {
+			return fmt.Errorf("role is required for agent %q", agent.Name)
+		}
+		if _, ok := names[agent.Name]; ok {
+			return fmt.Errorf("duplicate agent name %q", agent.Name)
+		}
+		names[agent.Name] = struct{}{}
+		if agent.Role == "captain" {
+			hasCaptain = true
+		}
+	}
+	if !hasCaptain {
+		return fmt.Errorf("at least one captain agent is required")
+	}
+
+	for _, skill := range t.Skills {
+		if strings.TrimSpace(skill.Name) == "" {
+			return fmt.Errorf("skill name is required")
+		}
+		if err := skill.Source.Validate(); err != nil {
+			return fmt.Errorf("skill %q: %w", skill.Name, err)
+		}
+	}
+
+	return nil
+}
+
+func (s SkillSource) Validate() error {
+	if strings.TrimSpace(s.Type) == "" {
+		return fmt.Errorf("skill source type is required")
+	}
+	switch s.Type {
+	case "local":
+		if strings.TrimSpace(s.Path) == "" {
+			return fmt.Errorf("local skill source requires path")
+		}
+	case "git":
+		if strings.TrimSpace(s.URL) == "" {
+			return fmt.Errorf("git skill source requires url")
+		}
+	case "registry":
+	default:
+		return fmt.Errorf("unsupported skill source type %q", s.Type)
+	}
+	return nil
+}
+
+func (t *TeamSpec) SkillMap() map[string]SkillRequirement {
+	out := make(map[string]SkillRequirement, len(t.Skills))
+	for _, skill := range t.Skills {
+		out[skill.Name] = skill
+	}
+	return out
+}
+
+func (t *TeamSpec) RequiredSkillRequirements() []SkillRequirement {
+	byName := t.SkillMap()
+	merged := map[string]SkillRequirement{}
+
+	for name, skill := range byName {
+		merged[name] = skill
+	}
+
+	for _, agent := range t.Agents {
+		for _, skillName := range agent.RequiredSkills {
+			if skill, ok := byName[skillName]; ok {
+				merged[skillName] = skill
+				continue
+			}
+			merged[skillName] = SkillRequirement{
+				Name:    skillName,
+				Version: "latest",
+				Source: SkillSource{
+					Type:     "registry",
+					Registry: "builtin",
+				},
+			}
+		}
+	}
+
+	out := make([]SkillRequirement, 0, len(merged))
+	for _, skill := range merged {
+		out = append(out, skill)
+	}
+	return out
+}

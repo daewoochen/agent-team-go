@@ -17,3 +17,11 @@ func WriteJSON(path string, value any) error {
 	}
 	return os.WriteFile(path, content, 0o644)
 }
+
+func ReadJSON(path string, value any) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(content, value)
+}

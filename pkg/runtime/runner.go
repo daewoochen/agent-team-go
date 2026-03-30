@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,9 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 	if err := channels.ValidateTeam(team); err != nil {
 		return nil, err
 	}
+	if err := team.ValidateModelCredentials(); err != nil {
+		return nil, err
+	}
 
 	for _, skillReq := range team.RequiredSkillRequirements() {
 		if err := policy.CanInstallSkill(team, skillReq); err != nil {
@@ -45,8 +49,11 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 	}
 
 	runID := time.Now().UTC().Format("20060102T150405Z")
-	events := make([]RunEvent, 0, 16)
-	artifacts := make([]Artifact, 0, 8)
+	events := make([]RunEvent, 0, 24)
+	artifacts := make([]Artifact, 0, 12)
+	workItems := make([]WorkItem, 0, 8)
+	approvals := buildApprovals(team)
+	modelBindings := buildModelBindings(team)
 	now := func() time.Time { return time.Now().UTC() }
 	appendEvent := func(event RunEvent) {
 		event.Timestamp = now()
@@ -62,14 +69,38 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 		Actor:   captain.Name,
 		Message: fmt.Sprintf("Captain received task: %s", task),
 	})
+	for _, binding := range modelBindings {
+		appendEvent(RunEvent{
+			Type:    "model.bound",
+			Actor:   binding.Agent,
+			Message: fmt.Sprintf("%s uses %s", binding.Agent, binding.Model),
+		})
+	}
+	for _, approval := range approvals {
+		approvalCopy := approval
+		appendEvent(RunEvent{
+			Type:     "approval.requested",
+			Actor:    captain.Name,
+			Message:  fmt.Sprintf("Approval requested for %s", approval.Action),
+			Approval: &approvalCopy,
+		})
+	}
 
 	planner, hasPlanner := agents.FindByRole(team, "planner")
 	planSummary := "Work directly from captain judgment."
 	if hasPlanner {
+		workItem := WorkItem{
+			ID:                 "plan-001",
+			Objective:          "Break the incoming task into executable work items.",
+			Inputs:             []string{task},
+			AcceptanceCriteria: "A captain-readable execution plan with clear specialist ownership.",
+			Status:             StatusRunning,
+		}
+		workItems = append(workItems, workItem)
 		delegation := Delegation{
 			From:              captain.Name,
 			To:                planner.Name,
-			TaskID:            "plan-001",
+			TaskID:            workItem.ID,
 			Budget:            1,
 			Deadline:          now().Add(30 * time.Minute).Format(time.RFC3339),
 			ExpectedArtifacts: []string{"execution-plan.md"},
@@ -80,8 +111,21 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 			Actor:      captain.Name,
 			Message:    "Captain delegated planning to planner.",
 			Delegation: &delegation,
+			WorkItem:   &workItem,
 		})
 		planSummary = buildPlan(task)
+		specialistItems := buildWorkItems(team, task)
+		for _, item := range specialistItems {
+			item.Status = StatusPending
+			workItems = append(workItems, item)
+			itemCopy := item
+			appendEvent(RunEvent{
+				Type:     "work_item.created",
+				Actor:    planner.Name,
+				Message:  fmt.Sprintf("Planner created %s", item.ID),
+				WorkItem: &itemCopy,
+			})
+		}
 		artifact := Artifact{
 			Name:     "execution-plan.md",
 			Producer: planner.Name,
@@ -94,13 +138,22 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 			Message:  "Planner produced the execution plan.",
 			Artifact: &artifact,
 		})
+		workItems[0].Status = StatusCompleted
+		if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
+			return nil, err
+		}
 	}
 
-	specialistRoles := []string{"researcher", "coder", "reviewer"}
-	for _, role := range specialistRoles {
-		agent, ok := agents.FindByRole(team, role)
-		if !ok {
+	for _, agent := range team.Agents {
+		role := agent.Role
+		if role == "captain" || role == "planner" {
 			continue
+		}
+		itemIndex := indexWorkItem(workItems, role+"-001")
+		if itemIndex >= 0 {
+			if err := Transition(workItems[itemIndex].Status, StatusRunning); err == nil {
+				workItems[itemIndex].Status = StatusRunning
+			}
 		}
 		delegation := Delegation{
 			From:              captain.Name,
@@ -130,6 +183,21 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 			Message:  fmt.Sprintf("%s delivered their artifact.", strings.Title(role)),
 			Artifact: &artifact,
 		})
+		if itemIndex >= 0 {
+			if err := Transition(workItems[itemIndex].Status, StatusCompleted); err == nil {
+				workItems[itemIndex].Status = StatusCompleted
+				itemCopy := workItems[itemIndex]
+				appendEvent(RunEvent{
+					Type:     "work_item.completed",
+					Actor:    agent.Name,
+					Message:  fmt.Sprintf("%s completed %s", agent.Name, itemCopy.ID),
+					WorkItem: &itemCopy,
+				})
+			}
+		}
+		if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
+			return nil, err
+		}
 	}
 
 	summary := summarize(task, planSummary, artifacts)
@@ -140,13 +208,20 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 	})
 
 	result := &RunResult{
-		RunID:     runID,
-		Summary:   summary,
-		Events:    events,
-		Artifacts: artifacts,
+		RunID:         runID,
+		Summary:       summary,
+		Events:        events,
+		Artifacts:     artifacts,
+		WorkItems:     workItems,
+		Approvals:     approvals,
+		ModelBindings: modelBindings,
 	}
 	result.ReplayPath = filepath.Join(r.workDir, ".agentteam", "runs", runID+".json")
+	result.CheckpointPath = filepath.Join(r.workDir, ".agentteam", "checkpoints", runID+".json")
 	if err := observe.WriteJSON(result.ReplayPath, result); err != nil {
+		return nil, err
+	}
+	if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
 		return nil, err
 	}
 
@@ -166,6 +241,56 @@ func buildPlan(task string) string {
 		"2. Assign research, implementation, and review work in parallel.",
 		"3. Reconcile artifacts and produce a final recommendation.",
 	}, "\n")
+}
+
+func buildWorkItems(team *spec.TeamSpec, task string) []WorkItem {
+	items := make([]WorkItem, 0, len(team.Agents))
+	lastSpecialistID := ""
+	for _, agent := range team.Agents {
+		if agent.Role == "captain" || agent.Role == "planner" {
+			continue
+		}
+
+		item := WorkItem{
+			ID:                 fmt.Sprintf("%s-001", agent.Role),
+			Objective:          workObjective(agent.Role, task),
+			Inputs:             []string{task},
+			AcceptanceCriteria: workAcceptance(agent.Role),
+			Status:             StatusPending,
+		}
+		if lastSpecialistID != "" && agent.Role == "reviewer" {
+			item.Dependencies = []string{lastSpecialistID}
+		}
+		items = append(items, item)
+		lastSpecialistID = item.ID
+	}
+	return items
+}
+
+func workObjective(role, task string) string {
+	switch role {
+	case "researcher":
+		return fmt.Sprintf("Research risks, assumptions, and dependencies for %s", task)
+	case "coder":
+		return fmt.Sprintf("Shape the implementation path for %s", task)
+	case "reviewer":
+		return fmt.Sprintf("Review the plan and outputs for %s", task)
+	default:
+		return fmt.Sprintf("Contribute role-specific output for %s", task)
+	}
+}
+
+func workAcceptance(role string) string {
+	switch role {
+	case "researcher":
+		return "A concise risk brief for the captain."
+	case "coder":
+		return "A concrete implementation note or patch strategy."
+	case "reviewer":
+		return "A clear go/no-go review checklist."
+	default:
+		return "A useful artifact for the captain."
+	}
 }
 
 func specialistOutput(role, task, plan string) string {
@@ -195,4 +320,109 @@ func summarize(task, plan string, artifacts []Artifact) string {
 	}
 	lines = append(lines, "", "This run produced a replay log and structured delegation events.")
 	return strings.Join(lines, "\n")
+}
+
+func (r *Runner) writeCheckpoint(runID, task string, workItems []WorkItem, approvals []ApprovalRequest, artifacts []Artifact) error {
+	completed := make([]string, 0, len(workItems))
+	pending := make([]string, 0, len(workItems))
+	for _, item := range workItems {
+		switch item.Status {
+		case StatusCompleted:
+			completed = append(completed, item.ID)
+		default:
+			pending = append(pending, item.ID)
+		}
+	}
+	sort.Strings(completed)
+	sort.Strings(pending)
+
+	checkpoint := Checkpoint{
+		RunID:              runID,
+		Task:               task,
+		Timestamp:          time.Now().UTC(),
+		CompletedWorkItems: completed,
+		PendingWorkItems:   pending,
+		Approvals:          approvals,
+		Artifacts:          artifacts,
+	}
+	return observe.WriteJSON(filepath.Join(r.workDir, ".agentteam", "checkpoints", runID+".json"), checkpoint)
+}
+
+func buildApprovals(team *spec.TeamSpec) []ApprovalRequest {
+	approvals := make([]ApprovalRequest, 0, 4)
+	if team.Policies.RequireApprovalForGitWrite {
+		approvals = append(approvals, ApprovalRequest{
+			ID:        "approval-git-write",
+			Action:    "git.write",
+			Target:    "repository",
+			Reason:    "Coder or release steps may mutate repository state.",
+			Approved:  true,
+			PolicyRef: "policies.require_approval_for_git_write",
+		})
+	}
+	if team.Policies.RequireApprovalForMessages {
+		approvals = append(approvals, ApprovalRequest{
+			ID:        "approval-outbound-message",
+			Action:    "message.send",
+			Target:    "channels",
+			Reason:    "Team may deliver updates to human channels.",
+			Approved:  true,
+			PolicyRef: "policies.require_approval_for_messages",
+		})
+	}
+	if team.Policies.RequireApprovalForExtSkills {
+		for _, skill := range team.RequiredSkillRequirements() {
+			if skill.Source.Type == "git" || skill.Source.Type == "registry" {
+				approvals = append(approvals, ApprovalRequest{
+					ID:        "approval-skill-" + skill.Name,
+					Action:    "skills.install",
+					Target:    skill.Name,
+					Reason:    "Skill comes from an external distribution source.",
+					Approved:  true,
+					PolicyRef: "policies.require_approval_for_external_skills",
+				})
+			}
+		}
+	}
+	return approvals
+}
+
+func buildModelBindings(team *spec.TeamSpec) []ModelBinding {
+	providers := team.ResolveProviders()
+	providerMap := make(map[string]spec.ResolvedProvider, len(providers))
+	for _, provider := range providers {
+		providerMap[provider.Name] = provider
+	}
+
+	out := make([]ModelBinding, 0, len(team.Agents))
+	for _, agent := range team.Agents {
+		modelRef := team.ResolveModel(agent)
+		providerName := parseProviderName(modelRef)
+		provider, ok := providerMap[providerName]
+		out = append(out, ModelBinding{
+			Agent:      agent.Name,
+			Model:      modelRef,
+			Provider:   providerName,
+			ProviderOK: ok,
+			APIKeyEnv:  provider.APIKeyEnv,
+			HasAPIKey:  provider.HasAPIKey,
+		})
+	}
+	return out
+}
+
+func parseProviderName(modelRef string) string {
+	if idx := strings.Index(modelRef, "/"); idx > 0 {
+		return modelRef[:idx]
+	}
+	return modelRef
+}
+
+func indexWorkItem(items []WorkItem, id string) int {
+	for i := range items {
+		if items[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }

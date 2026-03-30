@@ -32,6 +32,8 @@ This repository is the first public release of that direction.
 - `Feishu / Telegram Gateway`: channel adapters are first-class, not an afterthought
 - `Structured Delegation`: captain, planner, researcher, coder, reviewer all work through typed work items
 - `Replay Logs`: every run emits events and artifacts that can be replayed later
+- `Checkpoints + Approvals`: runs persist checkpoints and approval events for safer execution
+- `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
 
 ## Quick start
 
@@ -66,13 +68,60 @@ go run ./cmd/agentteam skills install \
 go run ./cmd/agentteam init --name my-team --dir ./demo
 ```
 
+### 5. Explain model setup
+
+```bash
+go run ./cmd/agentteam models explain --team ./examples/software-team/team.yaml
+```
+
+### 6. Inspect a replay
+
+```bash
+go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
+```
+
 ## What the MVP already does
 
 - Parses a declarative `team.yaml`
 - Validates channel configuration
+- Validates model provider configuration and API key env bindings
 - Ensures required skills are installed before a run
 - Runs a hierarchical team loop with structured delegations
-- Produces artifacts and a replay log under `.agentteam/runs/`
+- Produces work items, approvals, artifacts, checkpoints, and replay logs
+
+## Configure model API keys
+
+Model providers live under `models.providers` in `team.yaml`. The recommended pattern is:
+
+1. Put the real secret in an environment variable
+2. Reference that variable with `api_key_env`
+3. Point each agent at a model like `openai/gpt-4.1-mini`
+
+Example:
+
+```yaml
+models:
+  default_model: openai/gpt-4.1-mini
+  providers:
+    openai:
+      kind: openai-compatible
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+
+agents:
+  - name: captain
+    role: captain
+    model: openai/gpt-4.1
+```
+
+Then export the key before you run the team:
+
+```bash
+export OPENAI_API_KEY=your_api_key
+go run ./cmd/agentteam models validate --team ./team.yaml
+```
+
+The repo also ships an [.env.example](./.env.example) file with common variable names.
 
 ## Example architecture
 
@@ -100,6 +149,14 @@ flowchart TD
    Coordinator receives incoming requests, routes them to specialists, and reports progress back to Feishu or Telegram.
 3. `Ops Team`
    A captain agent validates channel access, installs missing skills, and assembles a safe execution plan.
+4. `Deep Research Team`
+   Researcher and Reviewer build a fact package while the captain prepares a final synthesis.
+5. `Incident Response Team`
+   Captain coordinates evidence gathering and approval-aware stakeholder updates.
+6. `Content Studio Team`
+   A small team plans, drafts, and reviews launch assets using reusable skills.
+
+More example specs live in [examples/README.md](./examples/README.md).
 
 ## Why Go
 
@@ -138,6 +195,14 @@ examples/              # Runnable team templates
 skills/                # Bundled skills
 docs/                  # Extra documentation
 ```
+
+## New in this iteration
+
+- Team-level model provider config with per-agent model selection
+- `agentteam models explain` and `agentteam models validate`
+- replay inspection via `agentteam replay show`
+- checkpoint persistence under `.agentteam/checkpoints/`
+- richer example cases for research, incident response, and content teams
 
 ## Current status
 

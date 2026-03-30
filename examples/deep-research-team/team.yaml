@@ -1,16 +1,16 @@
-name: assistant-team
-description: Coordinate incoming requests and route them to the right specialists.
+name: deep-research-team
+description: Build a research report with specialist agents and approval-aware outbound delivery.
 models:
-  default_model: mock/generalist
+  default_model: mock/research-default
   providers:
     mock:
       kind: mock
 skills:
-  - name: telegram-messenger
+  - name: research-kit
     version: ">=0.1.0"
     source:
       type: local
-      path: ../../skills/telegram-messenger
+      path: ../../skills/research-kit
   - name: feishu-messenger
     version: ">=0.1.0"
     source:
@@ -19,34 +19,36 @@ skills:
 agents:
   - name: captain
     role: captain
-    goal: Receive requests and coordinate specialists.
+    goal: Own research quality, synthesis, and executive summary.
     model: mock/captain
     allowed_tools: [route, summarize]
+    required_skills: [research-kit]
   - name: planner
     role: planner
-    goal: Turn requests into structured work items.
+    goal: Break the research request into work items and milestones.
     model: mock/planner
     allowed_tools: [plan]
   - name: researcher
     role: researcher
-    goal: Pull facts together before a response goes out.
+    goal: Collect evidence and identify missing facts.
     model: mock/researcher
     allowed_tools: [research]
+    required_skills: [research-kit]
+  - name: reviewer
+    role: reviewer
+    goal: Check claims, contradictions, and final structure.
+    model: mock/reviewer
+    allowed_tools: [review]
 channels:
   - kind: cli
     enabled: true
-  - kind: telegram
-    enabled: false
-    token: ""
   - kind: feishu
     enabled: false
-    app_id: ""
-    app_secret: ""
 policies:
   allow_external_skill_install: true
   require_approval_for_external_skills: true
   require_approval_for_messages: true
   require_approval_for_git_write: false
 budget:
-  max_delegations: 6
-  max_tokens: 80000
+  max_delegations: 10
+  max_tokens: 150000

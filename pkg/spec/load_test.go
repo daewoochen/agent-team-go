@@ -12,6 +12,11 @@ func TestLoadTeam(t *testing.T) {
 	content := `
 name: demo
 description: Demo team
+models:
+  default_model: mock/generalist
+  providers:
+    mock:
+      kind: mock
 skills:
   - name: github
     version: ">=0.1.0"
@@ -21,6 +26,7 @@ agents:
   - name: captain
     role: captain
     goal: Lead delivery
+    model: mock/captain
     required_skills: [github]
 channels:
   - kind: cli
@@ -43,5 +49,8 @@ channels:
 	}
 	if len(team.RequiredSkillRequirements()) != 1 {
 		t.Fatalf("expected 1 skill requirement, got %d", len(team.RequiredSkillRequirements()))
+	}
+	if team.ResolveModel(team.Agents[0]) != "mock/captain" {
+		t.Fatalf("unexpected resolved model %q", team.ResolveModel(team.Agents[0]))
 	}
 }

@@ -1,5 +1,10 @@
 name: software-team
 description: Launch a public-facing software delivery team with auto-installed skills.
+models:
+  default_model: mock/generalist
+  providers:
+    mock:
+      kind: mock
 skills:
   - name: github
     version: ">=0.1.0"
@@ -15,6 +20,7 @@ agents:
   - name: captain
     role: captain
     goal: Own the release quality, sequencing, and final delivery.
+    model: mock/captain
     allowed_tools: [run, summarize]
     required_skills: [github]
     delegation_policy:
@@ -24,20 +30,24 @@ agents:
   - name: planner
     role: planner
     goal: Break the task into executable steps.
+    model: mock/planner
     allowed_tools: [plan]
   - name: researcher
     role: researcher
     goal: Surface external dependencies and launch risks.
+    model: mock/researcher
     allowed_tools: [research]
     required_skills: [research-kit]
   - name: coder
     role: coder
     goal: Shape the minimum implementation path.
+    model: mock/coder
     allowed_tools: [implement]
     required_skills: [github]
   - name: reviewer
     role: reviewer
     goal: Review final quality and readiness.
+    model: mock/reviewer
     allowed_tools: [review]
 channels:
   - kind: cli
@@ -49,6 +59,8 @@ channels:
 policies:
   allow_external_skill_install: true
   require_approval_for_external_skills: true
+  require_approval_for_messages: true
+  require_approval_for_git_write: true
 budget:
   max_delegations: 8
   max_tokens: 120000

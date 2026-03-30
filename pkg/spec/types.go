@@ -8,6 +8,7 @@ import (
 type TeamSpec struct {
 	Name        string             `yaml:"name"`
 	Description string             `yaml:"description"`
+	Models      ModelConfig        `yaml:"models"`
 	Agents      []AgentSpec        `yaml:"agents"`
 	Skills      []SkillRequirement `yaml:"skills"`
 	Channels    []ChannelConfig    `yaml:"channels"`
@@ -22,6 +23,7 @@ type AgentSpec struct {
 	Name             string            `yaml:"name"`
 	Role             string            `yaml:"role"`
 	Goal             string            `yaml:"goal"`
+	Model            string            `yaml:"model"`
 	AllowedTools     []string          `yaml:"allowed_tools"`
 	RequiredSkills   []string          `yaml:"required_skills"`
 	DelegationPolicy DelegationPolicy  `yaml:"delegation_policy"`
@@ -48,6 +50,19 @@ type SkillSource struct {
 	Registry string `yaml:"registry,omitempty"`
 }
 
+type ModelConfig struct {
+	DefaultModel string                  `yaml:"default_model"`
+	Providers    map[string]ProviderSpec `yaml:"providers"`
+}
+
+type ProviderSpec struct {
+	Kind       string `yaml:"kind"`
+	BaseURL    string `yaml:"base_url,omitempty"`
+	APIKeyEnv  string `yaml:"api_key_env,omitempty"`
+	APIKey     string `yaml:"api_key,omitempty"`
+	DefaultRef string `yaml:"default_ref,omitempty"`
+}
+
 type ChannelConfig struct {
 	Kind              string   `yaml:"kind"`
 	Enabled           bool     `yaml:"enabled"`
@@ -63,6 +78,8 @@ type ChannelConfig struct {
 type PolicySpec struct {
 	AllowExternalSkillInstall   bool `yaml:"allow_external_skill_install"`
 	RequireApprovalForExtSkills bool `yaml:"require_approval_for_external_skills"`
+	RequireApprovalForMessages  bool `yaml:"require_approval_for_messages"`
+	RequireApprovalForGitWrite  bool `yaml:"require_approval_for_git_write"`
 }
 
 type MemoryConfig struct {
@@ -96,6 +113,9 @@ func (t *TeamSpec) Validate() error {
 			return fmt.Errorf("duplicate agent name %q", agent.Name)
 		}
 		names[agent.Name] = struct{}{}
+		if strings.TrimSpace(agent.Model) == "" {
+			agent.Model = t.Models.DefaultModel
+		}
 		if agent.Role == "captain" {
 			hasCaptain = true
 		}
@@ -111,6 +131,10 @@ func (t *TeamSpec) Validate() error {
 		if err := skill.Source.Validate(); err != nil {
 			return fmt.Errorf("skill %q: %w", skill.Name, err)
 		}
+	}
+
+	if err := t.Models.Validate(); err != nil {
+		return err
 	}
 
 	return nil
@@ -174,4 +198,28 @@ func (t *TeamSpec) RequiredSkillRequirements() []SkillRequirement {
 		out = append(out, skill)
 	}
 	return out
+}
+
+func (m ModelConfig) Validate() error {
+	for name, provider := range m.Providers {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("model provider name is required")
+		}
+		if strings.TrimSpace(provider.Kind) == "" {
+			return fmt.Errorf("model provider %q must declare kind", name)
+		}
+	}
+	return nil
+}
+
+func (t *TeamSpec) ResolveModel(agent AgentSpec) string {
+	if strings.TrimSpace(agent.Model) != "" {
+		return agent.Model
+	}
+	return t.Models.DefaultModel
+}
+
+func (t *TeamSpec) ModelProvider(name string) (ProviderSpec, bool) {
+	provider, ok := t.Models.Providers[name]
+	return provider, ok
 }

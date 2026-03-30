@@ -1,0 +1,57 @@
+name: content-studio-team
+description: Plan, draft, and review launch content with reusable skills.
+models:
+  default_model: mock/content-default
+  providers:
+    mock:
+      kind: mock
+skills:
+  - name: research-kit
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/research-kit
+  - name: github
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/github
+agents:
+  - name: captain
+    role: captain
+    goal: Own editorial direction and delivery cadence.
+    model: mock/captain
+    allowed_tools: [route, summarize]
+  - name: planner
+    role: planner
+    goal: Break the campaign into briefs and review points.
+    model: mock/planner
+    allowed_tools: [plan]
+  - name: researcher
+    role: researcher
+    goal: Gather facts, market angles, and launch context.
+    model: mock/researcher
+    allowed_tools: [research]
+    required_skills: [research-kit]
+  - name: coder
+    role: coder
+    goal: Produce structured drafts and repo-friendly content assets.
+    model: mock/writer
+    allowed_tools: [implement]
+    required_skills: [github]
+  - name: reviewer
+    role: reviewer
+    goal: Review clarity, consistency, and publish-readiness.
+    model: mock/reviewer
+    allowed_tools: [review]
+channels:
+  - kind: cli
+    enabled: true
+policies:
+  allow_external_skill_install: true
+  require_approval_for_external_skills: false
+  require_approval_for_messages: false
+  require_approval_for_git_write: true
+budget:
+  max_delegations: 8
+  max_tokens: 90000

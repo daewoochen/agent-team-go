@@ -39,21 +39,55 @@ type Artifact struct {
 	Content  string `json:"content"`
 }
 
+type ApprovalRequest struct {
+	ID        string `json:"id"`
+	Action    string `json:"action"`
+	Target    string `json:"target"`
+	Reason    string `json:"reason"`
+	Approved  bool   `json:"approved"`
+	PolicyRef string `json:"policy_ref"`
+}
+
+type ModelBinding struct {
+	Agent      string `json:"agent"`
+	Model      string `json:"model"`
+	Provider   string `json:"provider"`
+	ProviderOK bool   `json:"provider_ok"`
+	APIKeyEnv  string `json:"api_key_env,omitempty"`
+	HasAPIKey  bool   `json:"has_api_key"`
+}
+
+type Checkpoint struct {
+	RunID              string            `json:"run_id"`
+	Task               string            `json:"task"`
+	Timestamp          time.Time         `json:"timestamp"`
+	CompletedWorkItems []string          `json:"completed_work_items"`
+	PendingWorkItems   []string          `json:"pending_work_items"`
+	Approvals          []ApprovalRequest `json:"approvals"`
+	Artifacts          []Artifact        `json:"artifacts"`
+}
+
 type RunEvent struct {
-	Timestamp  time.Time   `json:"timestamp"`
-	Type       string      `json:"type"`
-	Actor      string      `json:"actor"`
-	Message    string      `json:"message"`
-	Delegation *Delegation `json:"delegation,omitempty"`
-	Artifact   *Artifact   `json:"artifact,omitempty"`
+	Timestamp  time.Time        `json:"timestamp"`
+	Type       string           `json:"type"`
+	Actor      string           `json:"actor"`
+	Message    string           `json:"message"`
+	Delegation *Delegation      `json:"delegation,omitempty"`
+	Artifact   *Artifact        `json:"artifact,omitempty"`
+	Approval   *ApprovalRequest `json:"approval,omitempty"`
+	WorkItem   *WorkItem        `json:"work_item,omitempty"`
 }
 
 type RunResult struct {
-	RunID      string     `json:"run_id"`
-	Summary    string     `json:"summary"`
-	Events     []RunEvent `json:"events"`
-	Artifacts  []Artifact `json:"artifacts"`
-	ReplayPath string     `json:"replay_path"`
+	RunID          string            `json:"run_id"`
+	Summary        string            `json:"summary"`
+	Events         []RunEvent        `json:"events"`
+	Artifacts      []Artifact        `json:"artifacts"`
+	WorkItems      []WorkItem        `json:"work_items"`
+	Approvals      []ApprovalRequest `json:"approvals"`
+	ModelBindings  []ModelBinding    `json:"model_bindings"`
+	ReplayPath     string            `json:"replay_path"`
+	CheckpointPath string            `json:"checkpoint_path"`
 }
 
 func Transition(current, next WorkStatus) error {

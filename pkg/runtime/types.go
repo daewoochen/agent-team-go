@@ -85,6 +85,7 @@ type Checkpoint struct {
 	Timestamp          time.Time           `json:"timestamp"`
 	Status             RunStatus           `json:"status"`
 	PausedReason       string              `json:"paused_reason,omitempty"`
+	MemoryPath         string              `json:"memory_path,omitempty"`
 	PlanSummary        string              `json:"plan_summary,omitempty"`
 	Summary            string              `json:"summary,omitempty"`
 	Events             []RunEvent          `json:"events"`
@@ -114,6 +115,7 @@ type RunResult struct {
 	Task           string              `json:"task"`
 	Status         RunStatus           `json:"status"`
 	PausedReason   string              `json:"paused_reason,omitempty"`
+	MemoryPath     string              `json:"memory_path,omitempty"`
 	Summary        string              `json:"summary"`
 	Events         []RunEvent          `json:"events"`
 	Artifacts      []Artifact          `json:"artifacts"`

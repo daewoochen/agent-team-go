@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/daewoochen/agent-team-go/pkg/channels"
+	"github.com/daewoochen/agent-team-go/pkg/memory"
 	"github.com/daewoochen/agent-team-go/pkg/observe"
 	"github.com/daewoochen/agent-team-go/pkg/runtime"
 	"github.com/daewoochen/agent-team-go/pkg/skills"
@@ -45,6 +46,10 @@ func main() {
 		}
 	case "models":
 		if err := runModels(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
+	case "memory":
+		if err := runMemory(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
 	case "replay":
@@ -84,6 +89,7 @@ Usage:
   agentteam channels validate --team ./team.yaml
   agentteam models explain --team ./team.yaml
   agentteam models validate --team ./team.yaml
+  agentteam memory show --team ./team.yaml
   agentteam replay show --run ./.agentteam/runs/<run>.json
   agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message
@@ -143,6 +149,10 @@ func runInit(args []string) error {
 			RequireApprovalForMessages:  true,
 			RequireApprovalForGitWrite:  true,
 		},
+		Memory: spec.MemoryConfig{
+			Backend:    "file",
+			MaxEntries: 20,
+		},
 		Budget: spec.BudgetConfig{
 			MaxDelegations: 8,
 			MaxTokens:      120000,
@@ -201,6 +211,9 @@ func runTeam(args []string) error {
 		}
 		fmt.Println()
 	}
+	if result.MemoryPath != "" {
+		fmt.Printf("Memory: %s\n", result.MemoryPath)
+	}
 	fmt.Printf("Replay log: %s\n", result.ReplayPath)
 	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
 	return nil
@@ -240,6 +253,9 @@ func runResume(args []string) error {
 			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
 		}
 		fmt.Println()
+	}
+	if result.MemoryPath != "" {
+		fmt.Printf("Memory: %s\n", result.MemoryPath)
 	}
 	fmt.Printf("Replay log: %s\n", result.ReplayPath)
 	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
@@ -558,6 +574,75 @@ func runModels(args []string) error {
 	}
 }
 
+func runMemory(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("expected a memory subcommand")
+	}
+
+	switch args[0] {
+	case "show":
+		fs := flag.NewFlagSet("memory show", flag.ContinueOnError)
+		teamPath := fs.String("team", "team.yaml", "path to a team spec")
+		path := fs.String("path", "", "path to a memory snapshot")
+		workDir := fs.String("workdir", ".", "runtime working directory")
+		limit := fs.Int("limit", 5, "max number of recent entries to show")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+
+		resolvedPath := strings.TrimSpace(*path)
+		teamName := ""
+		if resolvedPath == "" {
+			loaded, err := loadTeamWithEnv(*teamPath)
+			if err != nil {
+				return err
+			}
+			resolvedPath = loaded.ResolveMemoryPath(filepath.Clean(*workDir))
+			teamName = loaded.Name
+			if resolvedPath == "" {
+				return fmt.Errorf("memory is not enabled for team %s", loaded.Name)
+			}
+		} else {
+			resolvedPath = filepath.Clean(resolvedPath)
+		}
+
+		store := memory.NewFileStore(teamName, resolvedPath, 0)
+		snapshot, err := store.Load()
+		if err != nil {
+			return err
+		}
+		if snapshot.TeamName == "" {
+			snapshot.TeamName = teamName
+		}
+
+		fmt.Printf("Team: %s\n", snapshot.TeamName)
+		fmt.Printf("Path: %s\n", resolvedPath)
+		fmt.Printf("Entries: %d\n", len(snapshot.Entries))
+		if len(snapshot.Entries) == 0 {
+			fmt.Println("No team memory has been captured yet.")
+			return nil
+		}
+
+		show := *limit
+		if show <= 0 || show > len(snapshot.Entries) {
+			show = len(snapshot.Entries)
+		}
+		start := len(snapshot.Entries) - show
+		for _, entry := range snapshot.Entries[start:] {
+			fmt.Printf("- %s [%s] %s\n", entry.Timestamp.Format(timeFormat), entry.Status, entry.Task)
+			if len(entry.ArtifactNames) > 0 {
+				fmt.Printf("  Artifacts: %s\n", strings.Join(entry.ArtifactNames, ", "))
+			}
+			if strings.TrimSpace(entry.Summary) != "" {
+				fmt.Printf("  Summary: %s\n", firstLine(entry.Summary))
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown memory subcommand %q", args[0])
+	}
+}
+
 func runReplay(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("expected a replay subcommand")
@@ -586,6 +671,9 @@ func runReplay(args []string) error {
 		fmt.Printf("Pending approvals: %d\n", pendingApprovals(result.Approvals))
 		fmt.Printf("Rejected approvals: %d\n", rejectedApprovals(result.Approvals))
 		fmt.Printf("Deliveries: %d\n", len(result.Deliveries))
+		if result.MemoryPath != "" {
+			fmt.Printf("Memory: %s\n", result.MemoryPath)
+		}
 		fmt.Println("Recent events:")
 		start := 0
 		if len(result.Events) > 5 {
@@ -786,6 +874,11 @@ func renderTeamInspect(team *spec.TeamSpec) string {
 		for _, channel := range team.Channels {
 			lines = append(lines, fmt.Sprintf("- %s enabled=%t", channel.Kind, channel.Enabled))
 		}
+	}
+
+	if memoryPath := team.ResolveMemoryPath(team.BaseDir); memoryPath != "" {
+		lines = append(lines, "", "Memory:")
+		lines = append(lines, fmt.Sprintf("- backend=%s path=%s max_entries=%d", team.ResolveMemoryBackend(), memoryPath, team.ResolveMemoryMaxEntries()))
 	}
 
 	lines = append(lines, "", "Policies:")

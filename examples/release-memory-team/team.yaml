@@ -1,5 +1,5 @@
-name: software-team
-description: Launch a public-facing software delivery team with auto-installed skills.
+name: release-memory-team
+description: Reuse recent launch memory so the team can carry forward risks, decisions, and follow-up work across runs.
 models:
   default_model: mock/generalist
   providers:
@@ -14,14 +14,14 @@ skills:
   - name: research-kit
     version: ">=0.1.0"
     source:
-      type: registry
-      registry: builtin
+      type: local
+      path: ../../skills/research-kit
 agents:
   - name: captain
     role: captain
-    goal: Own the release quality, sequencing, and final delivery.
+    goal: Coordinate releases and retain useful launch memory across runs.
     model: mock/captain
-    allowed_tools: [run, summarize]
+    allowed_tools: [route, summarize]
     required_skills: [github]
     delegation_policy:
       max_depth: 2
@@ -29,41 +29,32 @@ agents:
       require_artifacts: true
   - name: planner
     role: planner
-    goal: Break the task into executable steps.
+    goal: Turn the launch request into an execution sequence.
     model: mock/planner
     allowed_tools: [plan]
   - name: researcher
     role: researcher
-    goal: Surface external dependencies and launch risks.
+    goal: Surface unresolved risks from prior launches and the current request.
     model: mock/researcher
     allowed_tools: [research]
     required_skills: [research-kit]
-  - name: coder
-    role: coder
-    goal: Shape the minimum implementation path.
-    model: mock/coder
-    allowed_tools: [implement]
-    required_skills: [github]
   - name: reviewer
     role: reviewer
-    goal: Review final quality and readiness.
+    goal: Check readiness, messaging, and rollback posture.
     model: mock/reviewer
     allowed_tools: [review]
 channels:
   - kind: cli
     enabled: true
-  - kind: telegram
-    enabled: false
-  - kind: feishu
-    enabled: false
 memory:
   backend: file
-  max_entries: 12
+  path: .agentteam/memory/release-history.json
+  max_entries: 8
 policies:
   allow_external_skill_install: true
-  require_approval_for_external_skills: true
-  require_approval_for_messages: true
+  require_approval_for_external_skills: false
+  require_approval_for_messages: false
   require_approval_for_git_write: true
 budget:
-  max_delegations: 8
-  max_tokens: 120000
+  max_delegations: 10
+  max_tokens: 90000

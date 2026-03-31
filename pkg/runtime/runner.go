@@ -10,6 +10,7 @@ import (
 
 	"github.com/daewoochen/agent-team-go/pkg/agents"
 	"github.com/daewoochen/agent-team-go/pkg/channels"
+	"github.com/daewoochen/agent-team-go/pkg/memory"
 	"github.com/daewoochen/agent-team-go/pkg/model"
 	"github.com/daewoochen/agent-team-go/pkg/observe"
 	"github.com/daewoochen/agent-team-go/pkg/policy"
@@ -36,6 +37,8 @@ type executionState struct {
 	approvals      []ApprovalRequest
 	modelBindings  []ModelBinding
 	deliveries     []channels.Delivery
+	memoryPath     string
+	memoryContext  string
 	replayPath     string
 	checkpointPath string
 }
@@ -89,12 +92,21 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		return nil, err
 	}
 
+	var memoryStore *memory.Store
+	memoryPath := team.ResolveMemoryPath(r.workDir)
+	if memoryPath != "" {
+		memoryStore = memory.NewFileStore(team.Name, memoryPath, team.ResolveMemoryMaxEntries())
+	}
+
 	captain, ok := agents.FindByRole(team, "captain")
 	if !ok {
 		return nil, fmt.Errorf("captain agent is required")
 	}
 
-	state := r.newExecutionState(team, task, checkpoint)
+	state, err := r.newExecutionState(team, task, checkpoint, memoryStore)
+	if err != nil {
+		return nil, err
+	}
 	now := func() time.Time { return time.Now().UTC() }
 	appendEvent := func(event RunEvent) {
 		event.Timestamp = now()
@@ -189,7 +201,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 				planner,
 				&state.workItems[plannerIndex],
 				"You are the planning agent for a multi-agent team.",
-				buildPlanPrompt(task, feedbackSummary),
+				buildPlanPrompt(task, feedbackSummary, state.memoryContext),
 				"execution-plan.md",
 				appendEvent,
 			)
@@ -285,7 +297,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 				agent,
 				item,
 				specialistSystemPrompt(agent.Role),
-				specialistPrompt(agent.Role, task, state.planSummary, feedbackSummary),
+				specialistPrompt(agent.Role, task, state.planSummary, feedbackSummary, state.memoryContext),
 				fmt.Sprintf("%s-report.md", agent.Role),
 				appendEvent,
 			)
@@ -326,7 +338,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		team,
 		captain,
 		"You are the captain who synthesizes all specialist work into a final answer.",
-		summarizePrompt(task, state.planSummary, feedbackSummary, state.workItems, state.artifacts),
+		summarizePrompt(task, state.planSummary, feedbackSummary, state.memoryContext, state.workItems, state.artifacts),
 	)
 	if err != nil {
 		return nil, err
@@ -370,10 +382,23 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		})
 	}
 
+	if memoryStore != nil {
+		if err := memoryStore.Append(memory.Entry{
+			RunID:         state.runID,
+			Task:          state.task,
+			Summary:       state.summary,
+			Status:        string(state.status),
+			Timestamp:     time.Now().UTC(),
+			ArtifactNames: artifactNames(state.artifacts),
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	return r.persistState(state)
 }
 
-func (r *Runner) newExecutionState(team *spec.TeamSpec, task string, checkpoint *Checkpoint) executionState {
+func (r *Runner) newExecutionState(team *spec.TeamSpec, task string, checkpoint *Checkpoint, memoryStore *memory.Store) (executionState, error) {
 	runID := time.Now().UTC().Format("20060102T150405Z")
 	if checkpoint != nil && checkpoint.RunID != "" {
 		runID = checkpoint.RunID
@@ -383,24 +408,33 @@ func (r *Runner) newExecutionState(team *spec.TeamSpec, task string, checkpoint 
 		task:           task,
 		status:         RunStatusRunning,
 		modelBindings:  buildModelBindings(team),
+		memoryPath:     team.ResolveMemoryPath(r.workDir),
 		replayPath:     filepath.Join(r.workDir, ".agentteam", "runs", runID+".json"),
 		checkpointPath: filepath.Join(r.workDir, ".agentteam", "checkpoints", runID+".json"),
 	}
+	if memoryStore != nil {
+		snapshot, err := memoryStore.Load()
+		if err != nil {
+			return executionState{}, err
+		}
+		state.memoryContext = memory.BuildContext(snapshot.Entries, 3)
+	}
 	if checkpoint == nil {
 		state.approvals = buildApprovals(team)
-		return state
+		return state, nil
 	}
 
 	state.status = checkpoint.Status
 	state.pausedReason = checkpoint.PausedReason
 	state.planSummary = checkpoint.PlanSummary
 	state.summary = checkpoint.Summary
+	state.memoryPath = checkpoint.MemoryPath
 	state.events = append([]RunEvent(nil), checkpoint.Events...)
 	state.artifacts = append([]Artifact(nil), checkpoint.Artifacts...)
 	state.workItems = append([]WorkItem(nil), checkpoint.WorkItems...)
 	state.approvals = append([]ApprovalRequest(nil), checkpoint.Approvals...)
 	state.deliveries = append([]channels.Delivery(nil), checkpoint.Deliveries...)
-	return state
+	return state, nil
 }
 
 func (r *Runner) persistIntermediateState(state executionState) (executionState, error) {
@@ -414,6 +448,7 @@ func (r *Runner) persistState(state executionState) (*RunResult, error) {
 		Task:           state.task,
 		Status:         state.status,
 		PausedReason:   state.pausedReason,
+		MemoryPath:     state.memoryPath,
 		Summary:        state.summary,
 		Events:         state.events,
 		Artifacts:      state.artifacts,
@@ -456,6 +491,7 @@ func checkpointFromState(state executionState) Checkpoint {
 		Timestamp:          time.Now().UTC(),
 		Status:             state.status,
 		PausedReason:       state.pausedReason,
+		MemoryPath:         state.memoryPath,
 		PlanSummary:        state.planSummary,
 		Summary:            state.summary,
 		Events:             state.events,
@@ -469,10 +505,13 @@ func checkpointFromState(state executionState) Checkpoint {
 	}
 }
 
-func buildPlanPrompt(task, feedback string) string {
+func buildPlanPrompt(task, feedback, memoryContext string) string {
 	lines := []string{
 		fmt.Sprintf("Create a concise execution plan for this task: %s", task),
 		"Return a short markdown plan with 3 numbered steps.",
+	}
+	if strings.TrimSpace(memoryContext) != "" {
+		lines = append(lines, "", memoryContext)
 	}
 	if strings.TrimSpace(feedback) != "" {
 		lines = append(lines, "", "Operator feedback:", feedback)
@@ -532,12 +571,15 @@ func workAcceptance(role string) string {
 	}
 }
 
-func specialistPrompt(role, task, plan, feedback string) string {
+func specialistPrompt(role, task, plan, feedback, memoryContext string) string {
 	prefix := []string{
 		fmt.Sprintf("Task: %s", task),
 		"",
 		"Plan basis:",
 		plan,
+	}
+	if strings.TrimSpace(memoryContext) != "" {
+		prefix = append(prefix, "", memoryContext)
 	}
 	if strings.TrimSpace(feedback) != "" {
 		prefix = append(prefix, "", "Operator feedback:", feedback)
@@ -559,13 +601,16 @@ func specialistSystemPrompt(role string) string {
 	return fmt.Sprintf("You are the %s agent in a multi-agent team. Be concise, specific, and execution-focused.", role)
 }
 
-func summarizePrompt(task, plan, feedback string, workItems []WorkItem, artifacts []Artifact) string {
+func summarizePrompt(task, plan, feedback, memoryContext string, workItems []WorkItem, artifacts []Artifact) string {
 	lines := []string{
 		fmt.Sprintf("Task: %s", task),
 		"",
 		"Planning baseline:",
 		plan,
 		"",
+	}
+	if strings.TrimSpace(memoryContext) != "" {
+		lines = append(lines, memoryContext, "")
 	}
 	if strings.TrimSpace(feedback) != "" {
 		lines = append(lines, "Operator feedback:", feedback, "")
@@ -909,6 +954,23 @@ func artifactByName(artifacts []Artifact, name string) (Artifact, bool) {
 		}
 	}
 	return Artifact{}, false
+}
+
+func artifactNames(artifacts []Artifact) []string {
+	if len(artifacts) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(artifacts))
+	names := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		if _, ok := seen[artifact.Name]; ok {
+			continue
+		}
+		seen[artifact.Name] = struct{}{}
+		names = append(names, artifact.Name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func upsertArtifact(artifacts *[]Artifact, next Artifact) {

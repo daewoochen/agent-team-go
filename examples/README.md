@@ -18,6 +18,8 @@ These examples are designed to show what an agent team can look like before you 
   A real-provider configuration example that uses `OPENAI_API_KEY`.
 - `manual-approval-team`
   Pause the run until a human approves protected actions, then resume from checkpoint.
+- `release-memory-team`
+  Reuse recent launch history so the team carries forward open risks and lessons across runs.
 
 ## Run one
 
@@ -45,6 +47,14 @@ To stop the run instead of resuming it:
 
 ```bash
 go run ./cmd/agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run-id>.json --id approval-outbound-message --note "Need a safer rollout first"
+```
+
+## Try persistent team memory
+
+```bash
+go run ./cmd/agentteam run --team ./examples/release-memory-team/team.yaml --task "Plan the v0.2 launch and capture the open risks"
+go run ./cmd/agentteam run --team ./examples/release-memory-team/team.yaml --task "Prepare the follow-up release after last week's launch issues"
+go run ./cmd/agentteam memory show --team ./examples/release-memory-team/team.yaml
 ```
 
 ## Switch to a real model provider

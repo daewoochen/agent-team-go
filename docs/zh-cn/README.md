@@ -24,6 +24,7 @@
 - 支持为启用的渠道生成 delivery preview
 - 每次运行都会输出 replay log 到 `.agentteam/runs/`
 - 每次运行都会输出 checkpoint 到 `.agentteam/checkpoints/`
+- 支持 file-backed team memory，并把最近几次运行结论注入后续任务
 - 支持 approval 事件和 work item 轨迹
 - 支持输出 team 拓扑和 mermaid 图
 
@@ -60,6 +61,12 @@ go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --
 
 ```bash
 go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
+```
+
+查看团队跨运行记忆：
+
+```bash
+go run ./cmd/agentteam memory show --team ./examples/software-team/team.yaml
 ```
 
 如果你想体验人工审批流，可以直接跑：
@@ -163,6 +170,32 @@ go run ./cmd/agentteam skills search --query messenger
 go run ./cmd/agentteam skills list --workdir .
 ```
 
+## 团队记忆
+
+很多真实场景不是“一次跑完就结束”，而是连续多轮协作。
+
+你可以在 `team.yaml` 里打开 file-backed memory：
+
+```yaml
+memory:
+  backend: file
+  path: .agentteam/memory/release-history.json
+  max_entries: 8
+```
+
+运行几次之后，用下面的命令查看团队最近记住了什么：
+
+```bash
+go run ./cmd/agentteam memory show --team ./examples/release-memory-team/team.yaml
+```
+
+这类能力特别适合：
+
+- 发布节奏管理
+- incident follow-up
+- 客诉和支持问题复盘
+- 周期性 research 项目
+
 ## 下一步演进
 
 - 补齐真实 Telegram / Feishu 网关实现
@@ -180,6 +213,7 @@ go run ./cmd/agentteam skills list --workdir .
 - `examples/incident-response-team/team.yaml`
 - `examples/content-studio-team/team.yaml`
 - `examples/openai-launch-team/team.yaml`
+- `examples/release-memory-team/team.yaml`
 
 如果你准备把它做成一个真正能拿 star 的开源项目，建议优先持续完善三件事：
 

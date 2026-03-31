@@ -2,6 +2,7 @@ package spec
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -85,8 +86,9 @@ type PolicySpec struct {
 }
 
 type MemoryConfig struct {
-	Backend string `yaml:"backend"`
-	Path    string `yaml:"path"`
+	Backend    string `yaml:"backend"`
+	Path       string `yaml:"path"`
+	MaxEntries int    `yaml:"max_entries"`
 }
 
 type BudgetConfig struct {
@@ -153,7 +155,22 @@ func (t *TeamSpec) Validate() error {
 	if err := t.Policies.Validate(); err != nil {
 		return err
 	}
+	if err := t.Memory.Validate(); err != nil {
+		return err
+	}
 
+	return nil
+}
+
+func (m MemoryConfig) Validate() error {
+	switch strings.TrimSpace(m.Backend) {
+	case "", "file":
+	default:
+		return fmt.Errorf("unsupported memory backend %q", m.Backend)
+	}
+	if m.MaxEntries < 0 {
+		return fmt.Errorf("memory max_entries must be >= 0")
+	}
 	return nil
 }
 
@@ -248,6 +265,41 @@ func (t *TeamSpec) ResolveApprovalMode() string {
 		return "auto"
 	}
 	return t.Policies.ApprovalMode
+}
+
+func (t *TeamSpec) ResolveMemoryBackend() string {
+	if strings.TrimSpace(t.Memory.Backend) != "" {
+		return t.Memory.Backend
+	}
+	if strings.TrimSpace(t.Memory.Path) != "" {
+		return "file"
+	}
+	return ""
+}
+
+func (t *TeamSpec) ResolveMemoryPath(workDir string) string {
+	if t.ResolveMemoryBackend() == "" {
+		return ""
+	}
+	path := strings.TrimSpace(t.Memory.Path)
+	if path == "" {
+		path = filepath.Join(".agentteam", "memory", t.Name+".json")
+	}
+	if filepath.IsAbs(path) {
+		return path
+	}
+	baseDir := t.BaseDir
+	if baseDir == "" {
+		baseDir = workDir
+	}
+	return filepath.Join(baseDir, path)
+}
+
+func (t *TeamSpec) ResolveMemoryMaxEntries() int {
+	if t.Memory.MaxEntries > 0 {
+		return t.Memory.MaxEntries
+	}
+	return 20
 }
 
 func (t *TeamSpec) ModelProvider(name string) (ProviderSpec, bool) {

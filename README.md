@@ -33,6 +33,7 @@ This repository is the first public release of that direction.
 - `Structured Delegation`: captain, planner, researcher, coder, reviewer all work through typed work items
 - `Replay Logs`: every run emits events and artifacts that can be replayed later
 - `Checkpoints + Approvals`: runs persist checkpoints and approval events for safer execution
+- `Team Memory`: compact history from earlier runs feeds into future planning and synthesis
 - `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
 - `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
 - `Channel Delivery Previews`: enabled channels produce delivery payload previews before you wire real bots
@@ -106,7 +107,13 @@ go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --
 go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
 ```
 
-### 10. Pause for approval and resume
+### 10. Inspect persistent team memory
+
+```bash
+go run ./cmd/agentteam memory show --team ./examples/software-team/team.yaml
+```
+
+### 11. Pause for approval and resume
 
 ```bash
 go run ./cmd/agentteam run \
@@ -134,7 +141,28 @@ go run ./cmd/agentteam approvals reject \
 - Validates model provider configuration and API key env bindings
 - Ensures required skills are installed before a run
 - Runs a hierarchical team loop with structured delegations, retries, and dependency-aware scheduling
-- Produces work items, approvals, artifacts, checkpoints, replay logs, channel delivery previews, and resumable paused runs
+- Produces work items, approvals, artifacts, checkpoints, replay logs, compact team memory, channel delivery previews, and resumable paused runs
+
+## Persistent team memory
+
+Agent teams should not lose every lesson after a run finishes.
+
+Enable file-backed memory in `team.yaml`:
+
+```yaml
+memory:
+  backend: file
+  path: .agentteam/memory/release-history.json
+  max_entries: 8
+```
+
+Then inspect it:
+
+```bash
+go run ./cmd/agentteam memory show --team ./examples/release-memory-team/team.yaml
+```
+
+This is useful for recurring cases such as release management, incident follow-up, customer support triage, and weekly research programs.
 
 ## Configure model API keys
 
@@ -204,6 +232,8 @@ flowchart TD
    Captain coordinates evidence gathering and approval-aware stakeholder updates.
 7. `Content Studio Team`
    A small team plans, drafts, and reviews launch assets using reusable skills.
+8. `Release Memory Team`
+   A recurring release team remembers prior risks, decisions, and follow-up tasks across runs.
 
 More example specs live in [examples/README.md](./examples/README.md).
 If you want a real provider example, start from [examples/openai-launch-team/team.yaml](./examples/openai-launch-team/team.yaml).
@@ -258,6 +288,7 @@ docs/                  # Extra documentation
 - manual approval mode with checkpoint-backed `approvals show/approve` and `resume`
 - approval rejection and operator notes that flow back into resumed runs
 - replay inspection via `agentteam replay show`
+- persistent team memory with `agentteam memory show`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams
 

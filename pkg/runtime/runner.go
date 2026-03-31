@@ -52,17 +52,20 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 	}
 
 	runID := time.Now().UTC().Format("20060102T150405Z")
-	events := make([]RunEvent, 0, 24)
-	artifacts := make([]Artifact, 0, 12)
+	events := make([]RunEvent, 0, 32)
+	artifacts := make([]Artifact, 0, 16)
 	workItems := make([]WorkItem, 0, 8)
 	approvals := buildApprovals(team)
 	modelBindings := buildModelBindings(team)
+	deliveries := make([]channels.Delivery, 0, len(team.Channels))
 	now := func() time.Time { return time.Now().UTC() }
 	appendEvent := func(event RunEvent) {
 		event.Timestamp = now()
 		events = append(events, event)
 	}
-	var err error
+	writeCheckpoint := func() error {
+		return r.writeCheckpoint(runID, task, workItems, approvals, artifacts)
+	}
 
 	captain, ok := agents.FindByRole(team, "captain")
 	if !ok {
@@ -90,152 +93,238 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 		})
 	}
 
-	planner, hasPlanner := agents.FindByRole(team, "planner")
 	planSummary := "Work directly from captain judgment."
+	planner, hasPlanner := agents.FindByRole(team, "planner")
 	if hasPlanner {
-		workItem := WorkItem{
+		plannerItem := WorkItem{
 			ID:                 "plan-001",
+			Owner:              planner.Name,
 			Objective:          "Break the incoming task into executable work items.",
 			Inputs:             []string{task},
 			AcceptanceCriteria: "A captain-readable execution plan with clear specialist ownership.",
-			Status:             StatusRunning,
+			Status:             StatusPending,
+			MaxAttempts:        team.ResolveMaxAttempts(planner),
 		}
-		workItems = append(workItems, workItem)
-		delegation := Delegation{
+		workItems = append(workItems, plannerItem)
+		plannerDelegation := Delegation{
 			From:              captain.Name,
 			To:                planner.Name,
-			TaskID:            workItem.ID,
+			TaskID:            plannerItem.ID,
 			Budget:            1,
 			Deadline:          now().Add(30 * time.Minute).Format(time.RFC3339),
 			ExpectedArtifacts: []string{"execution-plan.md"},
 			Reason:            "Break the request into executable work items.",
 		}
+		plannerItemCopy := plannerItem
 		appendEvent(RunEvent{
 			Type:       "delegation.created",
 			Actor:      captain.Name,
 			Message:    "Captain delegated planning to planner.",
-			Delegation: &delegation,
-			WorkItem:   &workItem,
+			Delegation: &plannerDelegation,
+			WorkItem:   &plannerItemCopy,
 		})
-		planSummary, err = r.generateAgentOutput(ctx, team, planner, "You are the planning agent for a multi-agent team.", buildPlanPrompt(task))
-		if err != nil {
-			return nil, err
-		}
-		specialistItems := buildWorkItems(team, task)
-		for _, item := range specialistItems {
-			item.Status = StatusPending
-			workItems = append(workItems, item)
-			itemCopy := item
-			appendEvent(RunEvent{
-				Type:     "work_item.created",
-				Actor:    planner.Name,
-				Message:  fmt.Sprintf("Planner created %s", item.ID),
-				WorkItem: &itemCopy,
-			})
-		}
-		artifact := Artifact{
-			Name:     "execution-plan.md",
-			Producer: planner.Name,
-			Content:  planSummary,
-		}
-		artifacts = append(artifacts, artifact)
 		appendEvent(RunEvent{
-			Type:     "artifact.created",
+			Type:     "work_item.created",
 			Actor:    planner.Name,
-			Message:  "Planner produced the execution plan.",
-			Artifact: &artifact,
+			Message:  fmt.Sprintf("Planner work item %s was created", plannerItem.ID),
+			WorkItem: &plannerItemCopy,
 		})
-		workItems[0].Status = StatusCompleted
-		if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
+
+		planArtifact, err := r.executeWorkItem(
+			ctx,
+			team,
+			planner,
+			&workItems[0],
+			"You are the planning agent for a multi-agent team.",
+			buildPlanPrompt(task),
+			"execution-plan.md",
+			appendEvent,
+		)
+		if err == nil {
+			artifacts = append(artifacts, planArtifact)
+			planSummary = planArtifact.Content
+		} else {
+			planSummary = fmt.Sprintf("Planner failed after %d attempt(s). Captain should continue with direct judgment.\n\nReason: %s", workItems[0].Attempt, workItems[0].Error)
+		}
+		if err := writeCheckpoint(); err != nil {
 			return nil, err
 		}
 	}
 
-	for _, agent := range team.Agents {
-		role := agent.Role
-		if role == "captain" || role == "planner" {
-			continue
-		}
-		itemIndex := indexWorkItem(workItems, role+"-001")
-		if itemIndex >= 0 {
-			if err := Transition(workItems[itemIndex].Status, StatusRunning); err == nil {
-				workItems[itemIndex].Status = StatusRunning
-			}
-		}
-		delegation := Delegation{
-			From:              captain.Name,
-			To:                agent.Name,
-			TaskID:            fmt.Sprintf("%s-001", role),
-			Budget:            1,
-			Deadline:          now().Add(45 * time.Minute).Format(time.RFC3339),
-			ExpectedArtifacts: []string{fmt.Sprintf("%s-report.md", role)},
-			Reason:            fmt.Sprintf("Contribute %s-specific output to the final result.", role),
-		}
+	specialistItems := buildWorkItems(team, task)
+	for _, item := range specialistItems {
+		workItems = append(workItems, item)
+		itemCopy := item
 		appendEvent(RunEvent{
-			Type:       "delegation.created",
-			Actor:      captain.Name,
-			Message:    fmt.Sprintf("Captain delegated work to %s.", agent.Name),
-			Delegation: &delegation,
+			Type:     "work_item.created",
+			Actor:    item.Owner,
+			Message:  fmt.Sprintf("Work item %s was created", item.ID),
+			WorkItem: &itemCopy,
 		})
+	}
 
-		artifact := Artifact{
-			Name:     fmt.Sprintf("%s-report.md", role),
-			Producer: agent.Name,
-			Content:  "",
-		}
-		artifact.Content, err = r.generateAgentOutput(ctx, team, agent, specialistSystemPrompt(role), specialistPrompt(role, task, planSummary))
-		if err != nil {
-			return nil, err
-		}
-		artifacts = append(artifacts, artifact)
-		appendEvent(RunEvent{
-			Type:     "artifact.created",
-			Actor:    agent.Name,
-			Message:  fmt.Sprintf("%s delivered their artifact.", strings.Title(role)),
-			Artifact: &artifact,
-		})
-		if itemIndex >= 0 {
-			if err := Transition(workItems[itemIndex].Status, StatusCompleted); err == nil {
-				workItems[itemIndex].Status = StatusCompleted
-				itemCopy := workItems[itemIndex]
+	for {
+		progress := false
+		for i := range workItems {
+			item := &workItems[i]
+			if item.Status != StatusPending || item.ID == "plan-001" {
+				continue
+			}
+
+			depState, depRef := dependencyState(workItems, *item)
+			switch depState {
+			case dependencyWaiting:
+				continue
+			case dependencyBlocked:
+				item.Status = StatusFailed
+				item.Error = fmt.Sprintf("blocked by dependency %s", depRef)
+				itemCopy := *item
 				appendEvent(RunEvent{
-					Type:     "work_item.completed",
-					Actor:    agent.Name,
-					Message:  fmt.Sprintf("%s completed %s", agent.Name, itemCopy.ID),
+					Type:     "work_item.blocked",
+					Actor:    item.Owner,
+					Message:  fmt.Sprintf("%s was blocked by %s", item.ID, depRef),
 					WorkItem: &itemCopy,
 				})
+				progress = true
+				if err := writeCheckpoint(); err != nil {
+					return nil, err
+				}
+				continue
+			}
+
+			agent, ok := findAgentByName(team, item.Owner)
+			if !ok {
+				item.Status = StatusFailed
+				item.Error = "owner agent not found"
+				itemCopy := *item
+				appendEvent(RunEvent{
+					Type:     "work_item.failed",
+					Actor:    item.Owner,
+					Message:  fmt.Sprintf("%s failed because owner agent %s does not exist", item.ID, item.Owner),
+					WorkItem: &itemCopy,
+				})
+				progress = true
+				if err := writeCheckpoint(); err != nil {
+					return nil, err
+				}
+				continue
+			}
+
+			delegation := Delegation{
+				From:              captain.Name,
+				To:                agent.Name,
+				TaskID:            item.ID,
+				Budget:            1,
+				Deadline:          now().Add(45 * time.Minute).Format(time.RFC3339),
+				ExpectedArtifacts: []string{fmt.Sprintf("%s-report.md", agent.Role)},
+				Reason:            fmt.Sprintf("Contribute %s-specific output to the final result.", agent.Role),
+			}
+			delegationCopy := delegation
+			appendEvent(RunEvent{
+				Type:       "delegation.created",
+				Actor:      captain.Name,
+				Message:    fmt.Sprintf("Captain delegated %s to %s.", item.ID, agent.Name),
+				Delegation: &delegationCopy,
+			})
+
+			artifact, err := r.executeWorkItem(
+				ctx,
+				team,
+				agent,
+				item,
+				specialistSystemPrompt(agent.Role),
+				specialistPrompt(agent.Role, task, planSummary),
+				fmt.Sprintf("%s-report.md", agent.Role),
+				appendEvent,
+			)
+			if err == nil {
+				artifacts = append(artifacts, artifact)
+			}
+			progress = true
+			if err := writeCheckpoint(); err != nil {
+				return nil, err
 			}
 		}
-		if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
-			return nil, err
+
+		if !progress {
+			break
 		}
 	}
 
-	summary, err := r.generateAgentOutput(ctx, team, captain, "You are the captain who synthesizes all specialist work into a final answer.", summarizePrompt(task, planSummary, artifacts))
+	for i := range workItems {
+		item := &workItems[i]
+		if item.Status != StatusPending {
+			continue
+		}
+		item.Status = StatusFailed
+		item.Error = "scheduler made no further progress"
+		itemCopy := *item
+		appendEvent(RunEvent{
+			Type:     "work_item.blocked",
+			Actor:    item.Owner,
+			Message:  fmt.Sprintf("%s remained pending because the scheduler made no progress", item.ID),
+			WorkItem: &itemCopy,
+		})
+	}
+
+	summary, err := r.generateAgentOutput(
+		ctx,
+		team,
+		captain,
+		"You are the captain who synthesizes all specialist work into a final answer.",
+		summarizePrompt(task, planSummary, workItems, artifacts),
+	)
 	if err != nil {
 		return nil, err
 	}
+
+	deliveries, err = channels.BuildTeamDeliveries(team, channels.DeliveryContext{
+		TeamName: team.Name,
+		RunID:    runID,
+		Task:     task,
+		Summary:  summary,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, delivery := range deliveries {
+		deliveryCopy := delivery
+		appendEvent(RunEvent{
+			Type:     "channel.delivery.prepared",
+			Actor:    captain.Name,
+			Message:  fmt.Sprintf("Prepared %s delivery", delivery.Channel),
+			Delivery: &deliveryCopy,
+		})
+	}
+
+	completionType := "run.completed"
+	completionMessage := "Captain assembled the final response."
+	if countFailedWorkItems(workItems) > 0 {
+		completionType = "run.completed_with_failures"
+		completionMessage = fmt.Sprintf("Captain assembled the final response with %d failed work item(s).", countFailedWorkItems(workItems))
+	}
 	appendEvent(RunEvent{
-		Type:    "run.completed",
+		Type:    completionType,
 		Actor:   captain.Name,
-		Message: "Captain assembled the final response.",
+		Message: completionMessage,
 	})
 
 	result := &RunResult{
-		RunID:         runID,
-		Summary:       summary,
-		Events:        events,
-		Artifacts:     artifacts,
-		WorkItems:     workItems,
-		Approvals:     approvals,
-		ModelBindings: modelBindings,
+		RunID:          runID,
+		Summary:        summary,
+		Events:         events,
+		Artifacts:      artifacts,
+		WorkItems:      workItems,
+		Approvals:      approvals,
+		ModelBindings:  modelBindings,
+		Deliveries:     deliveries,
+		ReplayPath:     filepath.Join(r.workDir, ".agentteam", "runs", runID+".json"),
+		CheckpointPath: filepath.Join(r.workDir, ".agentteam", "checkpoints", runID+".json"),
 	}
-	result.ReplayPath = filepath.Join(r.workDir, ".agentteam", "runs", runID+".json")
-	result.CheckpointPath = filepath.Join(r.workDir, ".agentteam", "checkpoints", runID+".json")
 	if err := observe.WriteJSON(result.ReplayPath, result); err != nil {
 		return nil, err
 	}
-	if err := r.writeCheckpoint(runID, task, workItems, approvals, artifacts); err != nil {
+	if err := writeCheckpoint(); err != nil {
 		return nil, err
 	}
 
@@ -264,10 +353,12 @@ func buildWorkItems(team *spec.TeamSpec, task string) []WorkItem {
 
 		item := WorkItem{
 			ID:                 fmt.Sprintf("%s-001", agent.Role),
+			Owner:              agent.Name,
 			Objective:          workObjective(agent.Role, task),
 			Inputs:             []string{task},
 			AcceptanceCriteria: workAcceptance(agent.Role),
 			Status:             StatusPending,
+			MaxAttempts:        team.ResolveMaxAttempts(agent),
 		}
 		if lastSpecialistID != "" && agent.Role == "reviewer" {
 			item.Dependencies = []string{lastSpecialistID}
@@ -321,35 +412,135 @@ func specialistSystemPrompt(role string) string {
 	return fmt.Sprintf("You are the %s agent in a multi-agent team. Be concise, specific, and execution-focused.", role)
 }
 
-func summarizePrompt(task, plan string, artifacts []Artifact) string {
+func summarizePrompt(task, plan string, workItems []WorkItem, artifacts []Artifact) string {
 	lines := []string{
 		fmt.Sprintf("Task: %s", task),
 		"",
 		"Planning baseline:",
 		plan,
 		"",
+		"Work item status:",
+		workItemStatusSummary(workItems),
+		"",
 		"Artifacts:",
 	}
 	for _, artifact := range artifacts {
 		lines = append(lines, fmt.Sprintf("## %s from %s\n%s", artifact.Name, artifact.Producer, artifact.Content))
 	}
-	lines = append(lines, "", "Produce the final captain summary in markdown. Mention the replayable nature of the run.")
+	lines = append(lines, "", "Produce the final captain summary in markdown. Mention the replayable nature of the run and any degraded areas.")
 	return strings.Join(lines, "\n")
+}
+
+func (r *Runner) executeWorkItem(
+	ctx context.Context,
+	team *spec.TeamSpec,
+	agent spec.AgentSpec,
+	item *WorkItem,
+	systemPrompt string,
+	input string,
+	artifactName string,
+	appendEvent func(RunEvent),
+) (Artifact, error) {
+	if item.MaxAttempts <= 0 {
+		item.MaxAttempts = 1
+	}
+
+	var lastErr error
+	for attempt := item.Attempt + 1; attempt <= item.MaxAttempts; attempt++ {
+		_ = Transition(item.Status, StatusRunning)
+		item.Status = StatusRunning
+		item.Attempt = attempt
+		item.Error = ""
+
+		itemCopy := *item
+		eventType := "work_item.started"
+		message := fmt.Sprintf("%s started %s (attempt %d/%d)", agent.Name, item.ID, attempt, item.MaxAttempts)
+		if attempt > 1 {
+			eventType = "work_item.retrying"
+			message = fmt.Sprintf("%s retried %s (attempt %d/%d)", agent.Name, item.ID, attempt, item.MaxAttempts)
+		}
+		appendEvent(RunEvent{
+			Type:     eventType,
+			Actor:    agent.Name,
+			Message:  message,
+			WorkItem: &itemCopy,
+		})
+
+		output, err := r.generateAgentOutput(ctx, team, agent, systemPrompt, input)
+		if err == nil {
+			artifact := Artifact{
+				Name:     artifactName,
+				Producer: agent.Name,
+				Content:  output,
+			}
+			appendEvent(RunEvent{
+				Type:     "artifact.created",
+				Actor:    agent.Name,
+				Message:  fmt.Sprintf("%s delivered %s.", agent.Name, artifactName),
+				Artifact: &artifact,
+			})
+			_ = Transition(item.Status, StatusCompleted)
+			item.Status = StatusCompleted
+			item.Error = ""
+			itemCopy = *item
+			appendEvent(RunEvent{
+				Type:     "work_item.completed",
+				Actor:    agent.Name,
+				Message:  fmt.Sprintf("%s completed %s", agent.Name, item.ID),
+				WorkItem: &itemCopy,
+			})
+			return artifact, nil
+		}
+
+		lastErr = err
+		item.Error = err.Error()
+		if attempt < item.MaxAttempts {
+			_ = Transition(item.Status, StatusPending)
+			item.Status = StatusPending
+			itemCopy = *item
+			appendEvent(RunEvent{
+				Type:     "work_item.retry_scheduled",
+				Actor:    agent.Name,
+				Message:  fmt.Sprintf("%s scheduled a retry for %s after: %s", agent.Name, item.ID, item.Error),
+				WorkItem: &itemCopy,
+			})
+			continue
+		}
+
+		_ = Transition(item.Status, StatusFailed)
+		item.Status = StatusFailed
+		itemCopy = *item
+		appendEvent(RunEvent{
+			Type:     "work_item.failed",
+			Actor:    agent.Name,
+			Message:  fmt.Sprintf("%s failed %s after %d attempt(s): %s", agent.Name, item.ID, item.Attempt, item.Error),
+			WorkItem: &itemCopy,
+		})
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("work item %s failed without a concrete error", item.ID)
+	}
+	return Artifact{}, lastErr
 }
 
 func (r *Runner) writeCheckpoint(runID, task string, workItems []WorkItem, approvals []ApprovalRequest, artifacts []Artifact) error {
 	completed := make([]string, 0, len(workItems))
 	pending := make([]string, 0, len(workItems))
+	failed := make([]string, 0, len(workItems))
 	for _, item := range workItems {
 		switch item.Status {
 		case StatusCompleted:
 			completed = append(completed, item.ID)
+		case StatusFailed:
+			failed = append(failed, item.ID)
 		default:
 			pending = append(pending, item.ID)
 		}
 	}
 	sort.Strings(completed)
 	sort.Strings(pending)
+	sort.Strings(failed)
 
 	checkpoint := Checkpoint{
 		RunID:              runID,
@@ -357,6 +548,7 @@ func (r *Runner) writeCheckpoint(runID, task string, workItems []WorkItem, appro
 		Timestamp:          time.Now().UTC(),
 		CompletedWorkItems: completed,
 		PendingWorkItems:   pending,
+		FailedWorkItems:    failed,
 		Approvals:          approvals,
 		Artifacts:          artifacts,
 	}
@@ -440,6 +632,70 @@ func indexWorkItem(items []WorkItem, id string) int {
 		}
 	}
 	return -1
+}
+
+func findAgentByName(team *spec.TeamSpec, name string) (spec.AgentSpec, bool) {
+	for _, agent := range team.Agents {
+		if agent.Name == name {
+			return agent, true
+		}
+	}
+	return spec.AgentSpec{}, false
+}
+
+type depState string
+
+const (
+	dependencyReady   depState = "ready"
+	dependencyWaiting depState = "waiting"
+	dependencyBlocked depState = "blocked"
+)
+
+func dependencyState(items []WorkItem, item WorkItem) (depState, string) {
+	if len(item.Dependencies) == 0 {
+		return dependencyReady, ""
+	}
+
+	for _, dep := range item.Dependencies {
+		idx := indexWorkItem(items, dep)
+		if idx < 0 {
+			return dependencyBlocked, dep
+		}
+		switch items[idx].Status {
+		case StatusCompleted:
+			continue
+		case StatusFailed:
+			return dependencyBlocked, dep
+		default:
+			return dependencyWaiting, dep
+		}
+	}
+	return dependencyReady, ""
+}
+
+func workItemStatusSummary(items []WorkItem) string {
+	if len(items) == 0 {
+		return "- no work items"
+	}
+	lines := make([]string, 0, len(items))
+	for _, item := range items {
+		line := fmt.Sprintf("- %s (%s): status=%s attempt=%d/%d", item.ID, item.Owner, item.Status, item.Attempt, item.MaxAttempts)
+		if item.Error != "" {
+			line += fmt.Sprintf(" error=%s", item.Error)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func countFailedWorkItems(items []WorkItem) int {
+	count := 0
+	for _, item := range items {
+		if item.Status == StatusFailed {
+			count++
+		}
+	}
+	return count
 }
 
 func (r *Runner) generateAgentOutput(ctx context.Context, team *spec.TeamSpec, agent spec.AgentSpec, systemPrompt, input string) (string, error) {

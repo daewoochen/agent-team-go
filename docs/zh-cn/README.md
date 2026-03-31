@@ -13,11 +13,14 @@
 - 支持解析 `team.yaml`
 - 支持 team 级别的模型 provider 配置，以及 agent 级别的 model 绑定
 - 支持 `captain -> planner -> researcher/coder/reviewer` 的层级式协作
+- 支持带依赖判断的 work item 调度
+- 支持 `max_attempts` 重试和 blocked dependency 事件
 - 支持 `local`、`registry`、`git` 三类 Skill 来源
 - 团队运行前自动检查并安装缺失 Skill
 - 支持脚手架生成自定义 Skill
 - 支持查看内置 Skill 目录和已安装 Skill
 - 提供 `cli`、`telegram`、`feishu` 三类渠道配置模型
+- 支持为启用的渠道生成 delivery preview
 - 每次运行都会输出 replay log 到 `.agentteam/runs/`
 - 每次运行都会输出 checkpoint 到 `.agentteam/checkpoints/`
 - 支持 approval 事件和 work item 轨迹
@@ -36,6 +39,7 @@ go run ./cmd/agentteam run \
 - 团队摘要
 - 结构化 delegation 事件
 - artifacts 列表
+- prepared deliveries
 - replay log 路径
 
 你也可以查看模型配置说明：
@@ -148,6 +152,7 @@ go run ./cmd/agentteam skills list --workdir .
 你可以先从这些 case 开始体验：
 
 - `examples/software-team/team.yaml`
+- `examples/assistant-team/team.yaml`
 - `examples/deep-research-team/team.yaml`
 - `examples/incident-response-team/team.yaml`
 - `examples/content-studio-team/team.yaml`

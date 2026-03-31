@@ -9,6 +9,9 @@ func TestTransition(t *testing.T) {
 	if err := Transition(StatusRunning, StatusCompleted); err != nil {
 		t.Fatalf("expected running -> completed to be valid: %v", err)
 	}
+	if err := Transition(StatusRunning, StatusPending); err != nil {
+		t.Fatalf("expected running -> pending to be valid for retries: %v", err)
+	}
 	if err := Transition(StatusCompleted, StatusRunning); err == nil {
 		t.Fatalf("expected completed -> running to be invalid")
 	}

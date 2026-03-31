@@ -177,6 +177,13 @@ func runTeam(args []string) error {
 	fmt.Println()
 	fmt.Println(result.Summary)
 	fmt.Println()
+	if len(result.Deliveries) > 0 {
+		fmt.Println("Prepared deliveries:")
+		for _, delivery := range result.Deliveries {
+			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
+		}
+		fmt.Println()
+	}
 	fmt.Printf("Replay log: %s\n", result.ReplayPath)
 	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
 	return nil
@@ -373,6 +380,7 @@ func runReplay(args []string) error {
 		fmt.Printf("Artifacts: %d\n", len(result.Artifacts))
 		fmt.Printf("Work items: %d\n", len(result.WorkItems))
 		fmt.Printf("Approvals: %d\n", len(result.Approvals))
+		fmt.Printf("Deliveries: %d\n", len(result.Deliveries))
 		fmt.Println("Recent events:")
 		start := 0
 		if len(result.Events) > 5 {

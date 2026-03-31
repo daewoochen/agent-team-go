@@ -7,7 +7,7 @@ These examples are designed to show what an agent team can look like before you 
 - `software-team`
   Ship a public MVP with planner, researcher, coder, and reviewer roles.
 - `assistant-team`
-  Route incoming requests and prepare channel-aware responses.
+  Route incoming requests, retry critical work items, and prepare channel-aware delivery previews.
 - `deep-research-team`
   Produce a research package and keep Feishu delivery in the loop.
 - `incident-response-team`

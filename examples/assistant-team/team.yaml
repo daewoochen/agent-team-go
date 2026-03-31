@@ -21,6 +21,7 @@ agents:
     role: captain
     goal: Receive requests and coordinate specialists.
     model: mock/captain
+    max_attempts: 2
     allowed_tools: [route, summarize]
   - name: planner
     role: planner
@@ -31,6 +32,7 @@ agents:
     role: researcher
     goal: Pull facts together before a response goes out.
     model: mock/researcher
+    max_attempts: 2
     allowed_tools: [research]
 channels:
   - kind: cli
@@ -38,10 +40,13 @@ channels:
   - kind: telegram
     enabled: false
     token: ""
+    allow_from: ["launch-chat"]
   - kind: feishu
     enabled: false
     app_id: ""
     app_secret: ""
+    mode: webhook
+    allow_from: ["release-room"]
 policies:
   allow_external_skill_install: true
   require_approval_for_external_skills: true

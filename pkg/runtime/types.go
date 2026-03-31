@@ -3,6 +3,8 @@ package runtime
 import (
 	"fmt"
 	"time"
+
+	"github.com/daewoochen/agent-team-go/pkg/channels"
 )
 
 type WorkStatus string
@@ -16,11 +18,15 @@ const (
 
 type WorkItem struct {
 	ID                 string     `json:"id"`
+	Owner              string     `json:"owner"`
 	Objective          string     `json:"objective"`
 	Inputs             []string   `json:"inputs"`
 	AcceptanceCriteria string     `json:"acceptance_criteria"`
 	Dependencies       []string   `json:"dependencies"`
 	Status             WorkStatus `json:"status"`
+	Attempt            int        `json:"attempt"`
+	MaxAttempts        int        `json:"max_attempts"`
+	Error              string     `json:"error,omitempty"`
 }
 
 type Delegation struct {
@@ -63,31 +69,34 @@ type Checkpoint struct {
 	Timestamp          time.Time         `json:"timestamp"`
 	CompletedWorkItems []string          `json:"completed_work_items"`
 	PendingWorkItems   []string          `json:"pending_work_items"`
+	FailedWorkItems    []string          `json:"failed_work_items"`
 	Approvals          []ApprovalRequest `json:"approvals"`
 	Artifacts          []Artifact        `json:"artifacts"`
 }
 
 type RunEvent struct {
-	Timestamp  time.Time        `json:"timestamp"`
-	Type       string           `json:"type"`
-	Actor      string           `json:"actor"`
-	Message    string           `json:"message"`
-	Delegation *Delegation      `json:"delegation,omitempty"`
-	Artifact   *Artifact        `json:"artifact,omitempty"`
-	Approval   *ApprovalRequest `json:"approval,omitempty"`
-	WorkItem   *WorkItem        `json:"work_item,omitempty"`
+	Timestamp  time.Time          `json:"timestamp"`
+	Type       string             `json:"type"`
+	Actor      string             `json:"actor"`
+	Message    string             `json:"message"`
+	Delegation *Delegation        `json:"delegation,omitempty"`
+	Artifact   *Artifact          `json:"artifact,omitempty"`
+	Approval   *ApprovalRequest   `json:"approval,omitempty"`
+	WorkItem   *WorkItem          `json:"work_item,omitempty"`
+	Delivery   *channels.Delivery `json:"delivery,omitempty"`
 }
 
 type RunResult struct {
-	RunID          string            `json:"run_id"`
-	Summary        string            `json:"summary"`
-	Events         []RunEvent        `json:"events"`
-	Artifacts      []Artifact        `json:"artifacts"`
-	WorkItems      []WorkItem        `json:"work_items"`
-	Approvals      []ApprovalRequest `json:"approvals"`
-	ModelBindings  []ModelBinding    `json:"model_bindings"`
-	ReplayPath     string            `json:"replay_path"`
-	CheckpointPath string            `json:"checkpoint_path"`
+	RunID          string              `json:"run_id"`
+	Summary        string              `json:"summary"`
+	Events         []RunEvent          `json:"events"`
+	Artifacts      []Artifact          `json:"artifacts"`
+	WorkItems      []WorkItem          `json:"work_items"`
+	Approvals      []ApprovalRequest   `json:"approvals"`
+	ModelBindings  []ModelBinding      `json:"model_bindings"`
+	Deliveries     []channels.Delivery `json:"deliveries"`
+	ReplayPath     string              `json:"replay_path"`
+	CheckpointPath string              `json:"checkpoint_path"`
 }
 
 func Transition(current, next WorkStatus) error {
@@ -97,10 +106,14 @@ func Transition(current, next WorkStatus) error {
 			return nil
 		}
 	case StatusRunning:
-		if next == StatusCompleted || next == StatusFailed {
+		if next == StatusCompleted || next == StatusFailed || next == StatusPending {
 			return nil
 		}
-	case StatusCompleted, StatusFailed:
+	case StatusFailed:
+		if next == StatusPending {
+			return nil
+		}
+	case StatusCompleted:
 	}
 	return fmt.Errorf("invalid transition from %s to %s", current, next)
 }

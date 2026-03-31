@@ -34,6 +34,8 @@ This repository is the first public release of that direction.
 - `Replay Logs`: every run emits events and artifacts that can be replayed later
 - `Checkpoints + Approvals`: runs persist checkpoints and approval events for safer execution
 - `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
+- `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
+- `Channel Delivery Previews`: enabled channels produce delivery payload previews before you wire real bots
 
 ## Quick start
 
@@ -109,8 +111,8 @@ go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
 - Validates channel configuration
 - Validates model provider configuration and API key env bindings
 - Ensures required skills are installed before a run
-- Runs a hierarchical team loop with structured delegations
-- Produces work items, approvals, artifacts, checkpoints, and replay logs
+- Runs a hierarchical team loop with structured delegations, retries, and dependency-aware scheduling
+- Produces work items, approvals, artifacts, checkpoints, replay logs, and channel delivery previews
 
 ## Configure model API keys
 
@@ -227,6 +229,8 @@ docs/                  # Extra documentation
 - `agentteam models explain` and `agentteam models validate`
 - `agentteam skills scaffold`, `skills search`, and `skills list`
 - `agentteam inspect team --format text|mermaid`
+- retry-aware work items with blocked-dependency events
+- prepared channel delivery previews in run output and replay logs
 - replay inspection via `agentteam replay show`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams

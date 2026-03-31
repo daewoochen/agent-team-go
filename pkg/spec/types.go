@@ -24,6 +24,7 @@ type AgentSpec struct {
 	Role             string            `yaml:"role"`
 	Goal             string            `yaml:"goal"`
 	Model            string            `yaml:"model"`
+	MaxAttempts      int               `yaml:"max_attempts"`
 	AllowedTools     []string          `yaml:"allowed_tools"`
 	RequiredSkills   []string          `yaml:"required_skills"`
 	DelegationPolicy DelegationPolicy  `yaml:"delegation_policy"`
@@ -113,6 +114,9 @@ func (t *TeamSpec) Validate() error {
 			return fmt.Errorf("duplicate agent name %q", agent.Name)
 		}
 		names[agent.Name] = struct{}{}
+		if agent.MaxAttempts < 0 {
+			return fmt.Errorf("agent %q has invalid max_attempts %d", agent.Name, agent.MaxAttempts)
+		}
 		if strings.TrimSpace(agent.Model) == "" {
 			agent.Model = t.Models.DefaultModel
 		}
@@ -217,6 +221,13 @@ func (t *TeamSpec) ResolveModel(agent AgentSpec) string {
 		return agent.Model
 	}
 	return t.Models.DefaultModel
+}
+
+func (t *TeamSpec) ResolveMaxAttempts(agent AgentSpec) int {
+	if agent.MaxAttempts > 0 {
+		return agent.MaxAttempts
+	}
+	return 1
 }
 
 func (t *TeamSpec) ModelProvider(name string) (ProviderSpec, bool) {

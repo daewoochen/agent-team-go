@@ -74,6 +74,15 @@ go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<
 go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
+如果审批人希望直接拒绝，也可以：
+
+```bash
+go run ./cmd/agentteam approvals reject \
+  --checkpoint ./.agentteam/checkpoints/<run-id>.json \
+  --id approval-outbound-message \
+  --note "需要更保守的发布策略和外部 review"
+```
+
 ## 核心概念
 
 ### TeamSpec

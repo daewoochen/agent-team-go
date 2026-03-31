@@ -87,6 +87,7 @@ Usage:
   agentteam replay show --run ./.agentteam/runs/<run>.json
   agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message
+  agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Need a safer rollout"
   agentteam resume --team ./team.yaml --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam inspect team --team ./team.yaml --format text
   agentteam version`)
@@ -268,7 +269,12 @@ func runApprovals(args []string) error {
 		fmt.Printf("Run ID: %s\n", checkpoint.RunID)
 		fmt.Printf("Status: %s\n", checkpoint.Status)
 		fmt.Printf("Pending approvals: %d\n", pendingApprovals(checkpoint.Approvals))
+		fmt.Printf("Rejected approvals: %d\n", rejectedApprovals(checkpoint.Approvals))
 		for _, approval := range checkpoint.Approvals {
+			if approval.Note != "" {
+				fmt.Printf("- %s decision=%s action=%s target=%s note=%q\n", approval.ID, approval.Decision, approval.Action, approval.Target, approval.Note)
+				continue
+			}
 			fmt.Printf("- %s decision=%s action=%s target=%s\n", approval.ID, approval.Decision, approval.Action, approval.Target)
 		}
 		return nil
@@ -277,6 +283,7 @@ func runApprovals(args []string) error {
 		checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
 		approvalID := fs.String("id", "", "approval id to approve")
 		approveAll := fs.Bool("all", false, "approve all pending approvals")
+		note := fs.String("note", "", "optional operator note")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -302,6 +309,9 @@ func runApprovals(args []string) error {
 			}
 			checkpoint.Approvals[i].Approved = true
 			checkpoint.Approvals[i].Decision = runtime.ApprovalApproved
+			if strings.TrimSpace(*note) != "" {
+				checkpoint.Approvals[i].Note = *note
+			}
 			approved := checkpoint.Approvals[i]
 			checkpoint.Events = append(checkpoint.Events, runtime.RunEvent{
 				Timestamp: time.Now().UTC(),
@@ -322,6 +332,59 @@ func runApprovals(args []string) error {
 			return err
 		}
 		fmt.Printf("Approved %d approval(s).\n", approvedCount)
+		return nil
+	case "reject":
+		fs := flag.NewFlagSet("approvals reject", flag.ContinueOnError)
+		checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
+		approvalID := fs.String("id", "", "approval id to reject")
+		rejectAll := fs.Bool("all", false, "reject all pending approvals")
+		note := fs.String("note", "", "operator note explaining the rejection")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*checkpointPath) == "" {
+			return fmt.Errorf("--checkpoint is required")
+		}
+		if !*rejectAll && strings.TrimSpace(*approvalID) == "" {
+			return fmt.Errorf("--id or --all is required")
+		}
+
+		checkpoint, err := loadCheckpoint(*checkpointPath)
+		if err != nil {
+			return err
+		}
+
+		rejectedCount := 0
+		for i := range checkpoint.Approvals {
+			if !*rejectAll && checkpoint.Approvals[i].ID != *approvalID {
+				continue
+			}
+			if checkpoint.Approvals[i].IsRejected() {
+				continue
+			}
+			checkpoint.Approvals[i].Approved = false
+			checkpoint.Approvals[i].Decision = runtime.ApprovalRejected
+			checkpoint.Approvals[i].Note = strings.TrimSpace(*note)
+			rejected := checkpoint.Approvals[i]
+			checkpoint.Events = append(checkpoint.Events, runtime.RunEvent{
+				Timestamp: time.Now().UTC(),
+				Type:      "approval.rejected",
+				Actor:     "operator",
+				Message:   fmt.Sprintf("Rejected %s", rejected.ID),
+				Approval:  &rejected,
+			})
+			rejectedCount++
+		}
+		if rejectedCount == 0 {
+			return fmt.Errorf("no matching approval found to reject")
+		}
+		if err := saveCheckpoint(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		if err := syncReplayApprovals(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		fmt.Printf("Rejected %d approval(s).\n", rejectedCount)
 		return nil
 	default:
 		return fmt.Errorf("unknown approvals subcommand %q", args[0])
@@ -521,6 +584,7 @@ func runReplay(args []string) error {
 		fmt.Printf("Work items: %d\n", len(result.WorkItems))
 		fmt.Printf("Approvals: %d\n", len(result.Approvals))
 		fmt.Printf("Pending approvals: %d\n", pendingApprovals(result.Approvals))
+		fmt.Printf("Rejected approvals: %d\n", rejectedApprovals(result.Approvals))
 		fmt.Printf("Deliveries: %d\n", len(result.Deliveries))
 		fmt.Println("Recent events:")
 		start := 0
@@ -623,7 +687,17 @@ func replayPathFromCheckpoint(checkpointPath, runID string) string {
 func pendingApprovals(approvals []runtime.ApprovalRequest) int {
 	count := 0
 	for _, approval := range approvals {
-		if !approval.IsApproved() {
+		if !approval.IsApproved() && !approval.IsRejected() {
+			count++
+		}
+	}
+	return count
+}
+
+func rejectedApprovals(approvals []runtime.ApprovalRequest) int {
+	count := 0
+	for _, approval := range approvals {
+		if approval.IsRejected() {
 			count++
 		}
 	}

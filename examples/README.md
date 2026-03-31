@@ -41,6 +41,12 @@ go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<
 go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
+To stop the run instead of resuming it:
+
+```bash
+go run ./cmd/agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run-id>.json --id approval-outbound-message --note "Need a safer rollout first"
+```
+
 ## Switch to a real model provider
 
 The examples use `mock/*` models so they are runnable without credentials.

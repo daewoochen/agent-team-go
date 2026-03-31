@@ -131,10 +131,22 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		})
 	}
 
+	if rejected := countRejectedApprovals(state.approvals); rejected > 0 {
+		state.status = RunStatusRejected
+		state.pausedReason = ""
+		state.summary = rejectionSummary(state.approvals)
+		appendEvent(RunEvent{
+			Type:    "run.rejected",
+			Actor:   captain.Name,
+			Message: fmt.Sprintf("Run stopped because %d approval(s) were rejected.", rejected),
+		})
+		return r.persistState(state)
+	}
+
 	if pending := countPendingApprovals(state.approvals); pending > 0 {
 		state.status = RunStatusWaitingApproval
 		state.pausedReason = fmt.Sprintf("%d approval(s) still pending", pending)
-		state.summary = fmt.Sprintf("Run paused waiting for %d approval(s). Use `agentteam approvals show`, `agentteam approvals approve`, then `agentteam resume`.", pending)
+		state.summary = fmt.Sprintf("Run paused waiting for %d approval(s). Use `agentteam approvals show`, `agentteam approvals approve` or `agentteam approvals reject`, then `agentteam resume` if the run should continue.", pending)
 		appendEvent(RunEvent{
 			Type:    "run.paused",
 			Actor:   captain.Name,
@@ -148,6 +160,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 	} else if strings.TrimSpace(state.planSummary) == "" {
 		state.planSummary = "Work directly from captain judgment."
 	}
+	feedbackSummary := humanFeedbackSummary(state.approvals)
 
 	planner, hasPlanner := agents.FindByRole(team, "planner")
 	if hasPlanner {
@@ -176,7 +189,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 				planner,
 				&state.workItems[plannerIndex],
 				"You are the planning agent for a multi-agent team.",
-				buildPlanPrompt(task),
+				buildPlanPrompt(task, feedbackSummary),
 				"execution-plan.md",
 				appendEvent,
 			)
@@ -272,7 +285,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 				agent,
 				item,
 				specialistSystemPrompt(agent.Role),
-				specialistPrompt(agent.Role, task, state.planSummary),
+				specialistPrompt(agent.Role, task, state.planSummary, feedbackSummary),
 				fmt.Sprintf("%s-report.md", agent.Role),
 				appendEvent,
 			)
@@ -313,7 +326,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		team,
 		captain,
 		"You are the captain who synthesizes all specialist work into a final answer.",
-		summarizePrompt(task, state.planSummary, state.workItems, state.artifacts),
+		summarizePrompt(task, state.planSummary, feedbackSummary, state.workItems, state.artifacts),
 	)
 	if err != nil {
 		return nil, err
@@ -456,11 +469,15 @@ func checkpointFromState(state executionState) Checkpoint {
 	}
 }
 
-func buildPlanPrompt(task string) string {
-	return strings.Join([]string{
+func buildPlanPrompt(task, feedback string) string {
+	lines := []string{
 		fmt.Sprintf("Create a concise execution plan for this task: %s", task),
 		"Return a short markdown plan with 3 numbered steps.",
-	}, "\n")
+	}
+	if strings.TrimSpace(feedback) != "" {
+		lines = append(lines, "", "Operator feedback:", feedback)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func buildWorkItems(team *spec.TeamSpec, task string) []WorkItem {
@@ -515,16 +532,26 @@ func workAcceptance(role string) string {
 	}
 }
 
-func specialistPrompt(role, task, plan string) string {
+func specialistPrompt(role, task, plan, feedback string) string {
+	prefix := []string{
+		fmt.Sprintf("Task: %s", task),
+		"",
+		"Plan basis:",
+		plan,
+	}
+	if strings.TrimSpace(feedback) != "" {
+		prefix = append(prefix, "", "Operator feedback:", feedback)
+	}
+	header := strings.Join(prefix, "\n")
 	switch role {
 	case "researcher":
-		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a concise research brief with assumptions, dependencies, and risks.", task, plan)
+		return fmt.Sprintf("%s\n\nProduce a concise research brief with assumptions, dependencies, and risks.", header)
 	case "coder":
-		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce implementation notes for the MVP path.", task, plan)
+		return fmt.Sprintf("%s\n\nProduce implementation notes for the MVP path.", header)
 	case "reviewer":
-		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a review checklist focused on quality, safety, and release readiness.", task, plan)
+		return fmt.Sprintf("%s\n\nProduce a review checklist focused on quality, safety, and release readiness.", header)
 	default:
-		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a concise artifact for this role.", task, plan)
+		return fmt.Sprintf("%s\n\nProduce a concise artifact for this role.", header)
 	}
 }
 
@@ -532,18 +559,23 @@ func specialistSystemPrompt(role string) string {
 	return fmt.Sprintf("You are the %s agent in a multi-agent team. Be concise, specific, and execution-focused.", role)
 }
 
-func summarizePrompt(task, plan string, workItems []WorkItem, artifacts []Artifact) string {
+func summarizePrompt(task, plan, feedback string, workItems []WorkItem, artifacts []Artifact) string {
 	lines := []string{
 		fmt.Sprintf("Task: %s", task),
 		"",
 		"Planning baseline:",
 		plan,
 		"",
+	}
+	if strings.TrimSpace(feedback) != "" {
+		lines = append(lines, "Operator feedback:", feedback, "")
+	}
+	lines = append(lines,
 		"Work item status:",
 		workItemStatusSummary(workItems),
 		"",
 		"Artifacts:",
-	}
+	)
 	for _, artifact := range artifacts {
 		lines = append(lines, fmt.Sprintf("## %s from %s\n%s", artifact.Name, artifact.Producer, artifact.Content))
 	}
@@ -802,11 +834,47 @@ func dependencyState(items []WorkItem, item WorkItem) (depState, string) {
 func countPendingApprovals(approvals []ApprovalRequest) int {
 	count := 0
 	for _, approval := range approvals {
-		if !approval.IsApproved() {
+		if !approval.IsApproved() && !approval.IsRejected() {
 			count++
 		}
 	}
 	return count
+}
+
+func countRejectedApprovals(approvals []ApprovalRequest) int {
+	count := 0
+	for _, approval := range approvals {
+		if approval.IsRejected() {
+			count++
+		}
+	}
+	return count
+}
+
+func humanFeedbackSummary(approvals []ApprovalRequest) string {
+	lines := make([]string, 0, len(approvals))
+	for _, approval := range approvals {
+		if approval.Note == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s: %s", approval.ID, approval.Note))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func rejectionSummary(approvals []ApprovalRequest) string {
+	lines := []string{"Run stopped because one or more approvals were rejected."}
+	for _, approval := range approvals {
+		if !approval.IsRejected() {
+			continue
+		}
+		line := fmt.Sprintf("- %s rejected for %s", approval.ID, approval.Action)
+		if approval.Note != "" {
+			line += fmt.Sprintf(": %s", approval.Note)
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func workItemStatusSummary(items []WorkItem) string {

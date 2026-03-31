@@ -25,6 +25,7 @@ const (
 
 	RunStatusRunning               RunStatus = "running"
 	RunStatusWaitingApproval       RunStatus = "waiting_approval"
+	RunStatusRejected              RunStatus = "rejected"
 	RunStatusCompleted             RunStatus = "completed"
 	RunStatusCompletedWithFailures RunStatus = "completed_with_failures"
 )
@@ -65,6 +66,7 @@ type ApprovalRequest struct {
 	Reason    string           `json:"reason"`
 	Approved  bool             `json:"approved"`
 	Decision  ApprovalDecision `json:"decision,omitempty"`
+	Note      string           `json:"note,omitempty"`
 	PolicyRef string           `json:"policy_ref"`
 }
 
@@ -128,6 +130,10 @@ func (a ApprovalRequest) IsApproved() bool {
 		return a.Decision == ApprovalApproved
 	}
 	return a.Approved
+}
+
+func (a ApprovalRequest) IsRejected() bool {
+	return a.Decision == ApprovalRejected
 }
 
 func Transition(current, next WorkStatus) error {

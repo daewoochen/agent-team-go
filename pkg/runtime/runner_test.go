@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/daewoochen/agent-team-go/pkg/model"
@@ -297,6 +298,7 @@ func TestRunnerPausesAndResumesAfterManualApproval(t *testing.T) {
 	for i := range checkpoint.Approvals {
 		checkpoint.Approvals[i].Approved = true
 		checkpoint.Approvals[i].Decision = ApprovalApproved
+		checkpoint.Approvals[i].Note = "Use a conservative rollout and mention the operator review."
 	}
 	if err := observe.WriteJSON(initial.CheckpointPath, &checkpoint); err != nil {
 		t.Fatalf("failed to write checkpoint: %v", err)
@@ -319,5 +321,64 @@ func TestRunnerPausesAndResumesAfterManualApproval(t *testing.T) {
 	}
 	if !resumedEvent {
 		t.Fatalf("expected run.resumed event")
+	}
+	if !strings.Contains(resumed.Summary, "conservative rollout") {
+		t.Fatalf("expected resumed summary to include operator note, got %q", resumed.Summary)
+	}
+}
+
+func TestRunnerEndsRejectedWhenApprovalIsRejected(t *testing.T) {
+	tmpDir := t.TempDir()
+	team := &spec.TeamSpec{
+		Name:        "approval-team",
+		Description: "Demo",
+		BaseDir:     tmpDir,
+		Models: spec.ModelConfig{
+			DefaultModel: "mock/generalist",
+			Providers: map[string]spec.ProviderSpec{
+				"mock": {
+					Kind: "mock",
+				},
+			},
+		},
+		Agents: []spec.AgentSpec{
+			{Name: "captain", Role: "captain", Goal: "Lead delivery", Model: "mock/captain"},
+			{Name: "planner", Role: "planner", Goal: "Plan the work", Model: "mock/planner"},
+		},
+		Channels: []spec.ChannelConfig{
+			{Kind: "cli", Enabled: true},
+		},
+		Policies: spec.PolicySpec{
+			RequireApprovalForMessages: true,
+			ApprovalMode:               "manual",
+		},
+	}
+
+	runner := NewRunner(tmpDir)
+	initial, err := runner.Run(context.Background(), team, "Ship a public MVP")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var checkpoint Checkpoint
+	if err := observe.ReadJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to load checkpoint: %v", err)
+	}
+	checkpoint.Approvals[0].Approved = false
+	checkpoint.Approvals[0].Decision = ApprovalRejected
+	checkpoint.Approvals[0].Note = "Need a safer rollout first."
+	if err := observe.WriteJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to write checkpoint: %v", err)
+	}
+
+	resumed, err := runner.Resume(context.Background(), team, initial.CheckpointPath)
+	if err != nil {
+		t.Fatalf("Resume returned error: %v", err)
+	}
+	if resumed.Status != RunStatusRejected {
+		t.Fatalf("expected rejected status, got %s", resumed.Status)
+	}
+	if !strings.Contains(resumed.Summary, "safer rollout") {
+		t.Fatalf("expected rejection summary to include note, got %q", resumed.Summary)
 	}
 }

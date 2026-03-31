@@ -118,6 +118,15 @@ go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<
 go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
+If the operator wants to stop the run instead of continuing:
+
+```bash
+go run ./cmd/agentteam approvals reject \
+  --checkpoint ./.agentteam/checkpoints/<run-id>.json \
+  --id approval-outbound-message \
+  --note "Need a safer rollout and external review first"
+```
+
 ## What the MVP already does
 
 - Parses a declarative `team.yaml`
@@ -247,6 +256,7 @@ docs/                  # Extra documentation
 - retry-aware work items with blocked-dependency events
 - prepared channel delivery previews in run output and replay logs
 - manual approval mode with checkpoint-backed `approvals show/approve` and `resume`
+- approval rejection and operator notes that flow back into resumed runs
 - replay inspection via `agentteam replay show`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams

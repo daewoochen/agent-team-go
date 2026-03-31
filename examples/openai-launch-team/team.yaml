@@ -1,0 +1,44 @@
+name: openai-launch-team
+description: A real-provider example showing where to configure API keys and model bindings.
+models:
+  default_model: openai/gpt-4.1-mini
+  providers:
+    openai:
+      kind: openai-compatible
+      base_url: https://api.openai.com/v1
+      api_key_env: OPENAI_API_KEY
+skills:
+  - name: github
+    version: ">=0.1.0"
+    source:
+      type: local
+      path: ../../skills/github
+agents:
+  - name: captain
+    role: captain
+    goal: Own launch quality and final synthesis.
+    model: openai/gpt-4.1
+    required_skills: [github]
+  - name: planner
+    role: planner
+    goal: Turn the launch goal into concrete work items.
+    model: openai/gpt-4.1-mini
+  - name: researcher
+    role: researcher
+    goal: Surface external dependencies and launch risks.
+    model: openai/gpt-4.1-mini
+  - name: reviewer
+    role: reviewer
+    goal: Review quality, safety, and readiness.
+    model: openai/gpt-4.1-mini
+channels:
+  - kind: cli
+    enabled: true
+policies:
+  allow_external_skill_install: true
+  require_approval_for_external_skills: true
+  require_approval_for_messages: false
+  require_approval_for_git_write: true
+budget:
+  max_delegations: 8
+  max_tokens: 120000

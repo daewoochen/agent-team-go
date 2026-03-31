@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -49,6 +50,10 @@ func main() {
 		if err := runReplay(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
+	case "inspect":
+		if err := runInspect(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
 	case "version":
 		fmt.Println("agentteam v0.1.0")
 	default:
@@ -64,10 +69,14 @@ Usage:
   agentteam init --name demo --dir ./demo
   agentteam run --team ./team.yaml --task "Ship the v0.1 release"
   agentteam skills install --name github --source local --path ./skills/github
+  agentteam skills scaffold --name writing --dir ./skills/writing
+  agentteam skills search --query telegram
+  agentteam skills list --workdir .
   agentteam channels validate --team ./team.yaml
   agentteam models explain --team ./team.yaml
   agentteam models validate --team ./team.yaml
   agentteam replay show --run ./.agentteam/runs/<run>.json
+  agentteam inspect team --team ./team.yaml --format text
   agentteam version`)
 }
 
@@ -153,7 +162,7 @@ func runTeam(args []string) error {
 		return fmt.Errorf("--task is required")
 	}
 
-	loaded, err := spec.LoadTeam(*teamPath)
+	loaded, err := loadTeamWithEnv(*teamPath)
 	if err != nil {
 		return err
 	}
@@ -209,6 +218,61 @@ func runSkills(args []string) error {
 		}
 		fmt.Printf("Installed %s at %s\n", result.Name, result.InstallDir)
 		return nil
+	case "scaffold":
+		fs := flag.NewFlagSet("skills scaffold", flag.ContinueOnError)
+		name := fs.String("name", "", "skill name")
+		dir := fs.String("dir", "", "target directory")
+		description := fs.String("description", "", "skill description")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*name) == "" {
+			return fmt.Errorf("--name is required")
+		}
+		targetDir := *dir
+		if strings.TrimSpace(targetDir) == "" {
+			targetDir = filepath.Join("skills", *name)
+		}
+		out, err := skills.Scaffold(*name, *description, targetDir)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Scaffolded %s at %s\n", *name, out)
+		return nil
+	case "search":
+		fs := flag.NewFlagSet("skills search", flag.ContinueOnError)
+		query := fs.String("query", "", "optional catalog search query")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		results := skills.Search(*query)
+		if len(results) == 0 {
+			fmt.Println("No matching skills found.")
+			return nil
+		}
+		for _, result := range results {
+			fmt.Printf("- %s [%s] %s\n", result.Name, result.Source, result.Description)
+		}
+		return nil
+	case "list":
+		fs := flag.NewFlagSet("skills list", flag.ContinueOnError)
+		workDir := fs.String("workdir", ".", "runtime working directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		installer := skills.NewInstaller(filepath.Join(filepath.Clean(*workDir), ".agentteam", "skills"))
+		installed, err := installer.ListInstalled()
+		if err != nil {
+			return err
+		}
+		if len(installed) == 0 {
+			fmt.Println("No installed skills found.")
+			return nil
+		}
+		for _, skill := range installed {
+			fmt.Printf("- %s@%s %s (%s)\n", skill.Name, skill.Version, skill.Description, skill.Path)
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown skills subcommand %q", args[0])
 	}
@@ -226,7 +290,7 @@ func runChannels(args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		loaded, err := spec.LoadTeam(*teamPath)
+		loaded, err := loadTeamWithEnv(*teamPath)
 		if err != nil {
 			return err
 		}
@@ -252,7 +316,7 @@ func runModels(args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		loaded, err := spec.LoadTeam(*teamPath)
+		loaded, err := loadTeamWithEnv(*teamPath)
 		if err != nil {
 			return err
 		}
@@ -264,7 +328,7 @@ func runModels(args []string) error {
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
-		loaded, err := spec.LoadTeam(*teamPath)
+		loaded, err := loadTeamWithEnv(*teamPath)
 		if err != nil {
 			return err
 		}
@@ -323,6 +387,38 @@ func runReplay(args []string) error {
 	}
 }
 
+func runInspect(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("expected an inspect subcommand")
+	}
+
+	switch args[0] {
+	case "team":
+		fs := flag.NewFlagSet("inspect team", flag.ContinueOnError)
+		teamPath := fs.String("team", "team.yaml", "path to a team spec")
+		format := fs.String("format", "text", "output format: text|mermaid")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		loaded, err := loadTeamWithEnv(*teamPath)
+		if err != nil {
+			return err
+		}
+		switch *format {
+		case "text":
+			fmt.Println(renderTeamInspect(loaded))
+			return nil
+		case "mermaid":
+			fmt.Println(renderTeamMermaid(loaded))
+			return nil
+		default:
+			return fmt.Errorf("unsupported inspect format %q", *format)
+		}
+	default:
+		return fmt.Errorf("unknown inspect subcommand %q", args[0])
+	}
+}
+
 const timeFormat = "2006-01-02 15:04:05Z07:00"
 
 func firstLine(s string) string {
@@ -331,6 +427,140 @@ func firstLine(s string) string {
 		return ""
 	}
 	return lines[0]
+}
+
+func loadTeamWithEnv(teamPath string) (*spec.TeamSpec, error) {
+	cleanPath := filepath.Clean(teamPath)
+	if err := loadDotEnvIfPresent(".env"); err != nil {
+		return nil, err
+	}
+	if err := loadDotEnvIfPresent(filepath.Join(filepath.Dir(cleanPath), ".env")); err != nil {
+		return nil, err
+	}
+	return spec.LoadTeam(cleanPath)
+}
+
+func loadDotEnvIfPresent(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimPrefix(line, "export ")
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" || value == "" {
+			continue
+		}
+		if _, exists := os.LookupEnv(key); exists {
+			continue
+		}
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
+}
+
+func renderTeamInspect(team *spec.TeamSpec) string {
+	lines := []string{
+		fmt.Sprintf("Team: %s", team.Name),
+		fmt.Sprintf("Description: %s", team.Description),
+		fmt.Sprintf("Default model: %s", team.Models.DefaultModel),
+	}
+
+	providers := team.ResolveProviders()
+	if len(providers) > 0 {
+		sort.Slice(providers, func(i, j int) bool {
+			return providers[i].Name < providers[j].Name
+		})
+		lines = append(lines, "", "Providers:")
+		for _, provider := range providers {
+			env := provider.APIKeyEnv
+			if env == "" {
+				env = "<inline-or-unset>"
+			}
+			lines = append(lines, fmt.Sprintf("- %s (%s) env=%s has_api_key=%t", provider.Name, provider.Kind, env, provider.HasAPIKey))
+		}
+	}
+
+	lines = append(lines, "", "Agents:")
+	for _, agent := range team.Agents {
+		requiredSkills := "none"
+		if len(agent.RequiredSkills) > 0 {
+			requiredSkills = strings.Join(agent.RequiredSkills, ", ")
+		}
+		lines = append(lines, fmt.Sprintf("- %s [%s] model=%s skills=%s", agent.Name, agent.Role, team.ResolveModel(agent), requiredSkills))
+	}
+
+	requiredSkills := team.RequiredSkillRequirements()
+	if len(requiredSkills) > 0 {
+		sort.Slice(requiredSkills, func(i, j int) bool {
+			return requiredSkills[i].Name < requiredSkills[j].Name
+		})
+		lines = append(lines, "", "Skills:")
+		for _, skill := range requiredSkills {
+			lines = append(lines, fmt.Sprintf("- %s source=%s version=%s", skill.Name, skill.Source.Type, skill.Version))
+		}
+	}
+
+	if len(team.Channels) > 0 {
+		lines = append(lines, "", "Channels:")
+		for _, channel := range team.Channels {
+			lines = append(lines, fmt.Sprintf("- %s enabled=%t", channel.Kind, channel.Enabled))
+		}
+	}
+
+	lines = append(lines, "", "Policies:")
+	lines = append(lines, fmt.Sprintf("- allow_external_skill_install=%t", team.Policies.AllowExternalSkillInstall))
+	lines = append(lines, fmt.Sprintf("- require_approval_for_external_skills=%t", team.Policies.RequireApprovalForExtSkills))
+	lines = append(lines, fmt.Sprintf("- require_approval_for_messages=%t", team.Policies.RequireApprovalForMessages))
+	lines = append(lines, fmt.Sprintf("- require_approval_for_git_write=%t", team.Policies.RequireApprovalForGitWrite))
+	lines = append(lines, "", fmt.Sprintf("Delegation graph: agentteam inspect team --team %s --format mermaid", team.SourcePath))
+
+	return strings.Join(lines, "\n")
+}
+
+func renderTeamMermaid(team *spec.TeamSpec) string {
+	captain := captainName(team)
+	lines := []string{
+		"flowchart TD",
+		fmt.Sprintf(`    task["Task"] --> captain["%s"]`, captain),
+	}
+	for _, agent := range team.Agents {
+		if agent.Role == "captain" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf(`    captain --> %s["%s (%s)"]`, mermaidNodeID(agent.Name), agent.Name, team.ResolveModel(agent)))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func captainName(team *spec.TeamSpec) string {
+	for _, agent := range team.Agents {
+		if agent.Role == "captain" {
+			return agent.Name
+		}
+	}
+	return "captain"
+}
+
+func mermaidNodeID(name string) string {
+	replacer := strings.NewReplacer("-", "_", " ", "_", "/", "_", ".", "_")
+	return "node_" + replacer.Replace(name)
 }
 
 func exitErr(err error) {

@@ -15,10 +15,13 @@
 - 支持 `captain -> planner -> researcher/coder/reviewer` 的层级式协作
 - 支持 `local`、`registry`、`git` 三类 Skill 来源
 - 团队运行前自动检查并安装缺失 Skill
+- 支持脚手架生成自定义 Skill
+- 支持查看内置 Skill 目录和已安装 Skill
 - 提供 `cli`、`telegram`、`feishu` 三类渠道配置模型
 - 每次运行都会输出 replay log 到 `.agentteam/runs/`
 - 每次运行都会输出 checkpoint 到 `.agentteam/checkpoints/`
 - 支持 approval 事件和 work item 轨迹
+- 支持输出 team 拓扑和 mermaid 图
 
 ## 快速开始
 
@@ -39,6 +42,13 @@ go run ./cmd/agentteam run \
 
 ```bash
 go run ./cmd/agentteam models explain --team ./examples/software-team/team.yaml
+```
+
+查看 Team 拓扑：
+
+```bash
+go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml
+go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --format mermaid
 ```
 
 或者查看某次运行的 replay：
@@ -107,6 +117,26 @@ export OPENAI_API_KEY=your_api_key
 go run ./cmd/agentteam models validate --team ./team.yaml
 ```
 
+如果当前目录或者 `team.yaml` 所在目录里有 `.env` 文件，CLI 也会自动加载。
+
+## 自定义 Skill
+
+先生成一个本地 Skill 骨架：
+
+```bash
+go run ./cmd/agentteam skills scaffold \
+  --name launch-writer \
+  --dir ./skills/launch-writer \
+  --description "生成发布说明和对外文案"
+```
+
+查看内置 Skill 目录和已安装 Skill：
+
+```bash
+go run ./cmd/agentteam skills search --query messenger
+go run ./cmd/agentteam skills list --workdir .
+```
+
 ## 下一步演进
 
 - 补齐真实 Telegram / Feishu 网关实现
@@ -121,6 +151,7 @@ go run ./cmd/agentteam models validate --team ./team.yaml
 - `examples/deep-research-team/team.yaml`
 - `examples/incident-response-team/team.yaml`
 - `examples/content-studio-team/team.yaml`
+- `examples/openai-launch-team/team.yaml`
 
 如果你准备把它做成一个真正能拿 star 的开源项目，建议优先持续完善三件事：
 

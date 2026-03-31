@@ -10,6 +10,7 @@ import (
 
 	"github.com/daewoochen/agent-team-go/pkg/agents"
 	"github.com/daewoochen/agent-team-go/pkg/channels"
+	"github.com/daewoochen/agent-team-go/pkg/model"
 	"github.com/daewoochen/agent-team-go/pkg/observe"
 	"github.com/daewoochen/agent-team-go/pkg/policy"
 	"github.com/daewoochen/agent-team-go/pkg/skills"
@@ -17,14 +18,16 @@ import (
 )
 
 type Runner struct {
-	workDir   string
-	installer *skills.Installer
+	workDir      string
+	installer    *skills.Installer
+	modelFactory *model.Factory
 }
 
 func NewRunner(workDir string) *Runner {
 	return &Runner{
-		workDir:   filepath.Clean(workDir),
-		installer: skills.NewInstaller(filepath.Join(filepath.Clean(workDir), ".agentteam", "skills")),
+		workDir:      filepath.Clean(workDir),
+		installer:    skills.NewInstaller(filepath.Join(filepath.Clean(workDir), ".agentteam", "skills")),
+		modelFactory: model.NewFactory(),
 	}
 }
 
@@ -59,6 +62,7 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 		event.Timestamp = now()
 		events = append(events, event)
 	}
+	var err error
 
 	captain, ok := agents.FindByRole(team, "captain")
 	if !ok {
@@ -113,7 +117,10 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 			Delegation: &delegation,
 			WorkItem:   &workItem,
 		})
-		planSummary = buildPlan(task)
+		planSummary, err = r.generateAgentOutput(ctx, team, planner, "You are the planning agent for a multi-agent team.", buildPlanPrompt(task))
+		if err != nil {
+			return nil, err
+		}
 		specialistItems := buildWorkItems(team, task)
 		for _, item := range specialistItems {
 			item.Status = StatusPending
@@ -174,7 +181,11 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 		artifact := Artifact{
 			Name:     fmt.Sprintf("%s-report.md", role),
 			Producer: agent.Name,
-			Content:  specialistOutput(role, task, planSummary),
+			Content:  "",
+		}
+		artifact.Content, err = r.generateAgentOutput(ctx, team, agent, specialistSystemPrompt(role), specialistPrompt(role, task, planSummary))
+		if err != nil {
+			return nil, err
 		}
 		artifacts = append(artifacts, artifact)
 		appendEvent(RunEvent{
@@ -200,7 +211,10 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 		}
 	}
 
-	summary := summarize(task, planSummary, artifacts)
+	summary, err := r.generateAgentOutput(ctx, team, captain, "You are the captain who synthesizes all specialist work into a final answer.", summarizePrompt(task, planSummary, artifacts))
+	if err != nil {
+		return nil, err
+	}
 	appendEvent(RunEvent{
 		Type:    "run.completed",
 		Actor:   captain.Name,
@@ -233,13 +247,10 @@ func (r *Runner) Run(ctx context.Context, team *spec.TeamSpec, task string) (*Ru
 	}
 }
 
-func buildPlan(task string) string {
+func buildPlanPrompt(task string) string {
 	return strings.Join([]string{
-		"# Execution Plan",
-		"",
-		fmt.Sprintf("1. Clarify the goal behind: %s", task),
-		"2. Assign research, implementation, and review work in parallel.",
-		"3. Reconcile artifacts and produce a final recommendation.",
+		fmt.Sprintf("Create a concise execution plan for this task: %s", task),
+		"Return a short markdown plan with 3 numbered steps.",
 	}, "\n")
 }
 
@@ -293,22 +304,26 @@ func workAcceptance(role string) string {
 	}
 }
 
-func specialistOutput(role, task, plan string) string {
+func specialistPrompt(role, task, plan string) string {
 	switch role {
 	case "researcher":
-		return fmt.Sprintf("Research brief for %q\n\n- Capture assumptions.\n- Identify external dependencies.\n- Surface launch risks.\n\nPlan basis:\n%s", task, plan)
+		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a concise research brief with assumptions, dependencies, and risks.", task, plan)
 	case "coder":
-		return fmt.Sprintf("Implementation notes for %q\n\n- Define the MVP surface.\n- Land the CLI and runtime loop.\n- Keep extension points stable for future MCP/A2A work.", task)
+		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce implementation notes for the MVP path.", task, plan)
 	case "reviewer":
-		return fmt.Sprintf("Review checklist for %q\n\n- Validate delegation traces.\n- Confirm skills auto-install path.\n- Verify channel configuration and docs quality.", task)
+		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a review checklist focused on quality, safety, and release readiness.", task, plan)
 	default:
-		return fmt.Sprintf("Artifact for %q", task)
+		return fmt.Sprintf("Task: %s\n\nPlan basis:\n%s\n\nProduce a concise artifact for this role.", task, plan)
 	}
 }
 
-func summarize(task, plan string, artifacts []Artifact) string {
+func specialistSystemPrompt(role string) string {
+	return fmt.Sprintf("You are the %s agent in a multi-agent team. Be concise, specific, and execution-focused.", role)
+}
+
+func summarizePrompt(task, plan string, artifacts []Artifact) string {
 	lines := []string{
-		fmt.Sprintf("Team completed task: %s", task),
+		fmt.Sprintf("Task: %s", task),
 		"",
 		"Planning baseline:",
 		plan,
@@ -316,9 +331,9 @@ func summarize(task, plan string, artifacts []Artifact) string {
 		"Artifacts:",
 	}
 	for _, artifact := range artifacts {
-		lines = append(lines, fmt.Sprintf("- %s from %s", artifact.Name, artifact.Producer))
+		lines = append(lines, fmt.Sprintf("## %s from %s\n%s", artifact.Name, artifact.Producer, artifact.Content))
 	}
-	lines = append(lines, "", "This run produced a replay log and structured delegation events.")
+	lines = append(lines, "", "Produce the final captain summary in markdown. Mention the replayable nature of the run.")
 	return strings.Join(lines, "\n")
 }
 
@@ -425,4 +440,25 @@ func indexWorkItem(items []WorkItem, id string) int {
 		}
 	}
 	return -1
+}
+
+func (r *Runner) generateAgentOutput(ctx context.Context, team *spec.TeamSpec, agent spec.AgentSpec, systemPrompt, input string) (string, error) {
+	modelRef := team.ResolveModel(agent)
+	providerName := parseProviderName(modelRef)
+	providerCfg, ok := team.ModelProvider(providerName)
+	if !ok {
+		return "", fmt.Errorf("agent %s references unknown provider %q", agent.Name, providerName)
+	}
+	provider, err := r.modelFactory.Build(providerCfg)
+	if err != nil {
+		return "", err
+	}
+	return provider.Generate(ctx, model.Prompt{
+		AgentName: agent.Name,
+		Role:      agent.Role,
+		Goal:      agent.Goal,
+		System:    systemPrompt,
+		Input:     input,
+		ModelRef:  modelRef,
+	})
 }

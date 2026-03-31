@@ -17,10 +17,7 @@ type ResolvedProvider struct {
 func (t *TeamSpec) ResolveProviders() []ResolvedProvider {
 	out := make([]ResolvedProvider, 0, len(t.Models.Providers))
 	for name, provider := range t.Models.Providers {
-		key := strings.TrimSpace(provider.APIKey)
-		if key == "" && strings.TrimSpace(provider.APIKeyEnv) != "" {
-			key = os.Getenv(provider.APIKeyEnv)
-		}
+		key := provider.APIKeyValue()
 		out = append(out, ResolvedProvider{
 			Name:      name,
 			Kind:      provider.Kind,
@@ -70,4 +67,12 @@ func (t *TeamSpec) ExplainModelSetup() string {
 		lines = append(lines, fmt.Sprintf("- %s (%s) key via %s", name, provider.Kind, env))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (p ProviderSpec) APIKeyValue() string {
+	key := strings.TrimSpace(p.APIKey)
+	if key == "" && strings.TrimSpace(p.APIKeyEnv) != "" {
+		key = os.Getenv(p.APIKeyEnv)
+	}
+	return key
 }

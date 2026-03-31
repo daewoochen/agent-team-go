@@ -62,19 +62,42 @@ go run ./cmd/agentteam skills install \
   --path ./skills/github
 ```
 
-### 4. Bootstrap your own team
+### 4. Scaffold a custom skill
+
+```bash
+go run ./cmd/agentteam skills scaffold \
+  --name launch-writer \
+  --dir ./skills/launch-writer \
+  --description "Draft release-ready launch notes"
+```
+
+### 5. Browse the skill catalog
+
+```bash
+go run ./cmd/agentteam skills search --query messenger
+go run ./cmd/agentteam skills list --workdir .
+```
+
+### 6. Bootstrap your own team
 
 ```bash
 go run ./cmd/agentteam init --name my-team --dir ./demo
 ```
 
-### 5. Explain model setup
+### 7. Explain model setup
 
 ```bash
 go run ./cmd/agentteam models explain --team ./examples/software-team/team.yaml
 ```
 
-### 6. Inspect a replay
+### 8. Inspect the team topology
+
+```bash
+go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml
+go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --format mermaid
+```
+
+### 9. Inspect a replay
 
 ```bash
 go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
@@ -121,7 +144,7 @@ export OPENAI_API_KEY=your_api_key
 go run ./cmd/agentteam models validate --team ./team.yaml
 ```
 
-The repo also ships an [.env.example](./.env.example) file with common variable names.
+`agentteam` will also auto-load a `.env` file from the current working directory and the team spec directory when present. The repo ships an [.env.example](./.env.example) file with common variable names.
 
 ## Example architecture
 
@@ -157,6 +180,7 @@ flowchart TD
    A small team plans, drafts, and reviews launch assets using reusable skills.
 
 More example specs live in [examples/README.md](./examples/README.md).
+If you want a real provider example, start from [examples/openai-launch-team/team.yaml](./examples/openai-launch-team/team.yaml).
 
 ## Why Go
 
@@ -199,7 +223,10 @@ docs/                  # Extra documentation
 ## New in this iteration
 
 - Team-level model provider config with per-agent model selection
+- real `openai-compatible` provider support alongside deterministic mock providers
 - `agentteam models explain` and `agentteam models validate`
+- `agentteam skills scaffold`, `skills search`, and `skills list`
+- `agentteam inspect team --format text|mermaid`
 - replay inspection via `agentteam replay show`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams

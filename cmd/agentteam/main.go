@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -50,6 +51,14 @@ func main() {
 		if err := runReplay(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
+	case "resume":
+		if err := runResume(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
+	case "approvals":
+		if err := runApprovals(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
 	case "inspect":
 		if err := runInspect(os.Args[2:]); err != nil {
 			exitErr(err)
@@ -76,6 +85,9 @@ Usage:
   agentteam models explain --team ./team.yaml
   agentteam models validate --team ./team.yaml
   agentteam replay show --run ./.agentteam/runs/<run>.json
+  agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run>.json
+  agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message
+  agentteam resume --team ./team.yaml --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam inspect team --team ./team.yaml --format text
   agentteam version`)
 }
@@ -174,6 +186,50 @@ func runTeam(args []string) error {
 	}
 
 	fmt.Printf("Run ID: %s\n", result.RunID)
+	fmt.Printf("Status: %s\n", result.Status)
+	fmt.Println()
+	fmt.Println(result.Summary)
+	fmt.Println()
+	if result.PausedReason != "" {
+		fmt.Printf("Paused reason: %s\n\n", result.PausedReason)
+	}
+	if len(result.Deliveries) > 0 {
+		fmt.Println("Prepared deliveries:")
+		for _, delivery := range result.Deliveries {
+			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
+		}
+		fmt.Println()
+	}
+	fmt.Printf("Replay log: %s\n", result.ReplayPath)
+	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
+	return nil
+}
+
+func runResume(args []string) error {
+	fs := flag.NewFlagSet("resume", flag.ContinueOnError)
+	teamPath := fs.String("team", "team.yaml", "path to a team spec")
+	checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
+	workDir := fs.String("workdir", ".", "runtime working directory")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*checkpointPath) == "" {
+		return fmt.Errorf("--checkpoint is required")
+	}
+
+	loaded, err := loadTeamWithEnv(*teamPath)
+	if err != nil {
+		return err
+	}
+
+	runner := runtime.NewRunner(filepath.Clean(*workDir))
+	result, err := runner.Resume(context.Background(), loaded, *checkpointPath)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Run ID: %s\n", result.RunID)
+	fmt.Printf("Status: %s\n", result.Status)
 	fmt.Println()
 	fmt.Println(result.Summary)
 	fmt.Println()
@@ -187,6 +243,89 @@ func runTeam(args []string) error {
 	fmt.Printf("Replay log: %s\n", result.ReplayPath)
 	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
 	return nil
+}
+
+func runApprovals(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("expected an approvals subcommand")
+	}
+
+	switch args[0] {
+	case "show":
+		fs := flag.NewFlagSet("approvals show", flag.ContinueOnError)
+		checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*checkpointPath) == "" {
+			return fmt.Errorf("--checkpoint is required")
+		}
+
+		checkpoint, err := loadCheckpoint(*checkpointPath)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Run ID: %s\n", checkpoint.RunID)
+		fmt.Printf("Status: %s\n", checkpoint.Status)
+		fmt.Printf("Pending approvals: %d\n", pendingApprovals(checkpoint.Approvals))
+		for _, approval := range checkpoint.Approvals {
+			fmt.Printf("- %s decision=%s action=%s target=%s\n", approval.ID, approval.Decision, approval.Action, approval.Target)
+		}
+		return nil
+	case "approve":
+		fs := flag.NewFlagSet("approvals approve", flag.ContinueOnError)
+		checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
+		approvalID := fs.String("id", "", "approval id to approve")
+		approveAll := fs.Bool("all", false, "approve all pending approvals")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*checkpointPath) == "" {
+			return fmt.Errorf("--checkpoint is required")
+		}
+		if !*approveAll && strings.TrimSpace(*approvalID) == "" {
+			return fmt.Errorf("--id or --all is required")
+		}
+
+		checkpoint, err := loadCheckpoint(*checkpointPath)
+		if err != nil {
+			return err
+		}
+
+		approvedCount := 0
+		for i := range checkpoint.Approvals {
+			if !*approveAll && checkpoint.Approvals[i].ID != *approvalID {
+				continue
+			}
+			if checkpoint.Approvals[i].IsApproved() {
+				continue
+			}
+			checkpoint.Approvals[i].Approved = true
+			checkpoint.Approvals[i].Decision = runtime.ApprovalApproved
+			approved := checkpoint.Approvals[i]
+			checkpoint.Events = append(checkpoint.Events, runtime.RunEvent{
+				Timestamp: time.Now().UTC(),
+				Type:      "approval.approved",
+				Actor:     "operator",
+				Message:   fmt.Sprintf("Approved %s", approved.ID),
+				Approval:  &approved,
+			})
+			approvedCount++
+		}
+		if approvedCount == 0 {
+			return fmt.Errorf("no matching pending approval found")
+		}
+		if err := saveCheckpoint(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		if err := syncReplayApprovals(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		fmt.Printf("Approved %d approval(s).\n", approvedCount)
+		return nil
+	default:
+		return fmt.Errorf("unknown approvals subcommand %q", args[0])
+	}
 }
 
 func runSkills(args []string) error {
@@ -376,10 +515,12 @@ func runReplay(args []string) error {
 			return err
 		}
 		fmt.Printf("Run ID: %s\n", result.RunID)
+		fmt.Printf("Status: %s\n", result.Status)
 		fmt.Printf("Summary: %s\n", firstLine(result.Summary))
 		fmt.Printf("Artifacts: %d\n", len(result.Artifacts))
 		fmt.Printf("Work items: %d\n", len(result.WorkItems))
 		fmt.Printf("Approvals: %d\n", len(result.Approvals))
+		fmt.Printf("Pending approvals: %d\n", pendingApprovals(result.Approvals))
 		fmt.Printf("Deliveries: %d\n", len(result.Deliveries))
 		fmt.Println("Recent events:")
 		start := 0
@@ -446,6 +587,47 @@ func loadTeamWithEnv(teamPath string) (*spec.TeamSpec, error) {
 		return nil, err
 	}
 	return spec.LoadTeam(cleanPath)
+}
+
+func loadCheckpoint(path string) (*runtime.Checkpoint, error) {
+	var checkpoint runtime.Checkpoint
+	if err := observe.ReadJSON(path, &checkpoint); err != nil {
+		return nil, err
+	}
+	return &checkpoint, nil
+}
+
+func saveCheckpoint(path string, checkpoint *runtime.Checkpoint) error {
+	return observe.WriteJSON(path, checkpoint)
+}
+
+func syncReplayApprovals(checkpointPath string, checkpoint *runtime.Checkpoint) error {
+	replayPath := replayPathFromCheckpoint(checkpointPath, checkpoint.RunID)
+	var result runtime.RunResult
+	if err := observe.ReadJSON(replayPath, &result); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	result.Approvals = checkpoint.Approvals
+	result.Events = checkpoint.Events
+	return observe.WriteJSON(replayPath, &result)
+}
+
+func replayPathFromCheckpoint(checkpointPath, runID string) string {
+	baseDir := filepath.Dir(filepath.Dir(filepath.Clean(checkpointPath)))
+	return filepath.Join(baseDir, "runs", runID+".json")
+}
+
+func pendingApprovals(approvals []runtime.ApprovalRequest) int {
+	count := 0
+	for _, approval := range approvals {
+		if !approval.IsApproved() {
+			count++
+		}
+	}
+	return count
 }
 
 func loadDotEnvIfPresent(path string) error {
@@ -537,6 +719,7 @@ func renderTeamInspect(team *spec.TeamSpec) string {
 	lines = append(lines, fmt.Sprintf("- require_approval_for_external_skills=%t", team.Policies.RequireApprovalForExtSkills))
 	lines = append(lines, fmt.Sprintf("- require_approval_for_messages=%t", team.Policies.RequireApprovalForMessages))
 	lines = append(lines, fmt.Sprintf("- require_approval_for_git_write=%t", team.Policies.RequireApprovalForGitWrite))
+	lines = append(lines, fmt.Sprintf("- approval_mode=%s", team.ResolveApprovalMode()))
 	lines = append(lines, "", fmt.Sprintf("Delegation graph: agentteam inspect team --team %s --format mermaid", team.SourcePath))
 
 	return strings.Join(lines, "\n")

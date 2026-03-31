@@ -36,6 +36,7 @@ This repository is the first public release of that direction.
 - `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
 - `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
 - `Channel Delivery Previews`: enabled channels produce delivery payload previews before you wire real bots
+- `Pause / Resume`: manual approval mode can pause a run, persist state, and resume after a human decision
 
 ## Quick start
 
@@ -105,6 +106,18 @@ go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --
 go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
 ```
 
+### 10. Pause for approval and resume
+
+```bash
+go run ./cmd/agentteam run \
+  --team ./examples/manual-approval-team/team.yaml \
+  --task "Prepare the launch response and guarded rollout plan"
+
+go run ./cmd/agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run-id>.json
+go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run-id>.json --all
+go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
+```
+
 ## What the MVP already does
 
 - Parses a declarative `team.yaml`
@@ -112,7 +125,7 @@ go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
 - Validates model provider configuration and API key env bindings
 - Ensures required skills are installed before a run
 - Runs a hierarchical team loop with structured delegations, retries, and dependency-aware scheduling
-- Produces work items, approvals, artifacts, checkpoints, replay logs, and channel delivery previews
+- Produces work items, approvals, artifacts, checkpoints, replay logs, channel delivery previews, and resumable paused runs
 
 ## Configure model API keys
 
@@ -174,11 +187,13 @@ flowchart TD
    Coordinator receives incoming requests, routes them to specialists, and reports progress back to Feishu or Telegram.
 3. `Ops Team`
    A captain agent validates channel access, installs missing skills, and assembles a safe execution plan.
-4. `Deep Research Team`
+4. `Manual Approval Team`
+   A run pauses for human approval before protected actions, then resumes from checkpoint.
+5. `Deep Research Team`
    Researcher and Reviewer build a fact package while the captain prepares a final synthesis.
-5. `Incident Response Team`
+6. `Incident Response Team`
    Captain coordinates evidence gathering and approval-aware stakeholder updates.
-6. `Content Studio Team`
+7. `Content Studio Team`
    A small team plans, drafts, and reviews launch assets using reusable skills.
 
 More example specs live in [examples/README.md](./examples/README.md).
@@ -231,6 +246,7 @@ docs/                  # Extra documentation
 - `agentteam inspect team --format text|mermaid`
 - retry-aware work items with blocked-dependency events
 - prepared channel delivery previews in run output and replay logs
+- manual approval mode with checkpoint-backed `approvals show/approve` and `resume`
 - replay inspection via `agentteam replay show`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams

@@ -1,0 +1,31 @@
+name: manual-approval-team
+description: Pause for human approval before the team sends messages or performs guarded actions.
+models:
+  default_model: mock/generalist
+  providers:
+    mock:
+      kind: mock
+agents:
+  - name: captain
+    role: captain
+    goal: Coordinate guarded execution and wait for human approval when required.
+    model: mock/captain
+    max_attempts: 2
+  - name: planner
+    role: planner
+    goal: Break the task into a safe rollout plan.
+    model: mock/planner
+  - name: researcher
+    role: researcher
+    goal: Surface risks and communication needs.
+    model: mock/researcher
+channels:
+  - kind: cli
+    enabled: true
+policies:
+  require_approval_for_messages: true
+  require_approval_for_git_write: true
+  approval_mode: manual
+budget:
+  max_delegations: 6
+  max_tokens: 80000

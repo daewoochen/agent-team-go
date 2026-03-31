@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/daewoochen/agent-team-go/pkg/model"
+	"github.com/daewoochen/agent-team-go/pkg/observe"
 	"github.com/daewoochen/agent-team-go/pkg/spec"
 )
 
@@ -246,5 +247,77 @@ func TestRunnerBlocksDependentWorkItemAfterFailure(t *testing.T) {
 	}
 	if !blocked {
 		t.Fatalf("expected blocked work item event for reviewer")
+	}
+}
+
+func TestRunnerPausesAndResumesAfterManualApproval(t *testing.T) {
+	tmpDir := t.TempDir()
+	team := &spec.TeamSpec{
+		Name:        "approval-team",
+		Description: "Demo",
+		BaseDir:     tmpDir,
+		Models: spec.ModelConfig{
+			DefaultModel: "mock/generalist",
+			Providers: map[string]spec.ProviderSpec{
+				"mock": {
+					Kind: "mock",
+				},
+			},
+		},
+		Agents: []spec.AgentSpec{
+			{Name: "captain", Role: "captain", Goal: "Lead delivery", Model: "mock/captain"},
+			{Name: "planner", Role: "planner", Goal: "Plan the work", Model: "mock/planner"},
+			{Name: "researcher", Role: "researcher", Goal: "Research risks", Model: "mock/researcher"},
+		},
+		Channels: []spec.ChannelConfig{
+			{Kind: "cli", Enabled: true},
+		},
+		Policies: spec.PolicySpec{
+			RequireApprovalForMessages: true,
+			ApprovalMode:               "manual",
+		},
+	}
+
+	runner := NewRunner(tmpDir)
+	initial, err := runner.Run(context.Background(), team, "Ship a public MVP")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if initial.Status != RunStatusWaitingApproval {
+		t.Fatalf("expected waiting approval status, got %s", initial.Status)
+	}
+	if pending := countPendingApprovals(initial.Approvals); pending == 0 {
+		t.Fatalf("expected pending approvals")
+	}
+
+	var checkpoint Checkpoint
+	if err := observe.ReadJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to load checkpoint: %v", err)
+	}
+	for i := range checkpoint.Approvals {
+		checkpoint.Approvals[i].Approved = true
+		checkpoint.Approvals[i].Decision = ApprovalApproved
+	}
+	if err := observe.WriteJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to write checkpoint: %v", err)
+	}
+
+	resumed, err := runner.Resume(context.Background(), team, initial.CheckpointPath)
+	if err != nil {
+		t.Fatalf("Resume returned error: %v", err)
+	}
+	if resumed.Status != RunStatusCompleted {
+		t.Fatalf("expected completed status, got %s", resumed.Status)
+	}
+
+	resumedEvent := false
+	for _, event := range resumed.Events {
+		if event.Type == "run.resumed" {
+			resumedEvent = true
+			break
+		}
+	}
+	if !resumedEvent {
+		t.Fatalf("expected run.resumed event")
 	}
 }

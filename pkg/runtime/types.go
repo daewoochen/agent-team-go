@@ -9,11 +9,24 @@ import (
 
 type WorkStatus string
 
+type ApprovalDecision string
+
+type RunStatus string
+
 const (
 	StatusPending   WorkStatus = "pending"
 	StatusRunning   WorkStatus = "running"
 	StatusCompleted WorkStatus = "completed"
 	StatusFailed    WorkStatus = "failed"
+
+	ApprovalPending  ApprovalDecision = "pending"
+	ApprovalApproved ApprovalDecision = "approved"
+	ApprovalRejected ApprovalDecision = "rejected"
+
+	RunStatusRunning               RunStatus = "running"
+	RunStatusWaitingApproval       RunStatus = "waiting_approval"
+	RunStatusCompleted             RunStatus = "completed"
+	RunStatusCompletedWithFailures RunStatus = "completed_with_failures"
 )
 
 type WorkItem struct {
@@ -46,12 +59,13 @@ type Artifact struct {
 }
 
 type ApprovalRequest struct {
-	ID        string `json:"id"`
-	Action    string `json:"action"`
-	Target    string `json:"target"`
-	Reason    string `json:"reason"`
-	Approved  bool   `json:"approved"`
-	PolicyRef string `json:"policy_ref"`
+	ID        string           `json:"id"`
+	Action    string           `json:"action"`
+	Target    string           `json:"target"`
+	Reason    string           `json:"reason"`
+	Approved  bool             `json:"approved"`
+	Decision  ApprovalDecision `json:"decision,omitempty"`
+	PolicyRef string           `json:"policy_ref"`
 }
 
 type ModelBinding struct {
@@ -64,14 +78,21 @@ type ModelBinding struct {
 }
 
 type Checkpoint struct {
-	RunID              string            `json:"run_id"`
-	Task               string            `json:"task"`
-	Timestamp          time.Time         `json:"timestamp"`
-	CompletedWorkItems []string          `json:"completed_work_items"`
-	PendingWorkItems   []string          `json:"pending_work_items"`
-	FailedWorkItems    []string          `json:"failed_work_items"`
-	Approvals          []ApprovalRequest `json:"approvals"`
-	Artifacts          []Artifact        `json:"artifacts"`
+	RunID              string              `json:"run_id"`
+	Task               string              `json:"task"`
+	Timestamp          time.Time           `json:"timestamp"`
+	Status             RunStatus           `json:"status"`
+	PausedReason       string              `json:"paused_reason,omitempty"`
+	PlanSummary        string              `json:"plan_summary,omitempty"`
+	Summary            string              `json:"summary,omitempty"`
+	Events             []RunEvent          `json:"events"`
+	WorkItems          []WorkItem          `json:"work_items"`
+	CompletedWorkItems []string            `json:"completed_work_items"`
+	PendingWorkItems   []string            `json:"pending_work_items"`
+	FailedWorkItems    []string            `json:"failed_work_items"`
+	Approvals          []ApprovalRequest   `json:"approvals"`
+	Artifacts          []Artifact          `json:"artifacts"`
+	Deliveries         []channels.Delivery `json:"deliveries"`
 }
 
 type RunEvent struct {
@@ -88,6 +109,9 @@ type RunEvent struct {
 
 type RunResult struct {
 	RunID          string              `json:"run_id"`
+	Task           string              `json:"task"`
+	Status         RunStatus           `json:"status"`
+	PausedReason   string              `json:"paused_reason,omitempty"`
 	Summary        string              `json:"summary"`
 	Events         []RunEvent          `json:"events"`
 	Artifacts      []Artifact          `json:"artifacts"`
@@ -97,6 +121,13 @@ type RunResult struct {
 	Deliveries     []channels.Delivery `json:"deliveries"`
 	ReplayPath     string              `json:"replay_path"`
 	CheckpointPath string              `json:"checkpoint_path"`
+}
+
+func (a ApprovalRequest) IsApproved() bool {
+	if a.Decision != "" {
+		return a.Decision == ApprovalApproved
+	}
+	return a.Approved
 }
 
 func Transition(current, next WorkStatus) error {

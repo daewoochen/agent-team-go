@@ -15,6 +15,7 @@
 - 支持 `captain -> planner -> researcher/coder/reviewer` 的层级式协作
 - 支持带依赖判断的 work item 调度
 - 支持 `max_attempts` 重试和 blocked dependency 事件
+- 支持手动审批模式下的 pause / resume
 - 支持 `local`、`registry`、`git` 三类 Skill 来源
 - 团队运行前自动检查并安装缺失 Skill
 - 支持脚手架生成自定义 Skill
@@ -59,6 +60,18 @@ go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --
 
 ```bash
 go run ./cmd/agentteam replay show --run ./.agentteam/runs/<run-id>.json
+```
+
+如果你想体验人工审批流，可以直接跑：
+
+```bash
+go run ./cmd/agentteam run \
+  --team ./examples/manual-approval-team/team.yaml \
+  --task "准备对外说明和受控发布计划"
+
+go run ./cmd/agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run-id>.json
+go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run-id>.json --all
+go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
 ## 核心概念
@@ -153,6 +166,7 @@ go run ./cmd/agentteam skills list --workdir .
 
 - `examples/software-team/team.yaml`
 - `examples/assistant-team/team.yaml`
+- `examples/manual-approval-team/team.yaml`
 - `examples/deep-research-team/team.yaml`
 - `examples/incident-response-team/team.yaml`
 - `examples/content-studio-team/team.yaml`

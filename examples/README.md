@@ -16,6 +16,8 @@ These examples are designed to show what an agent team can look like before you 
   Plan and review launch content with structured delegation.
 - `openai-launch-team`
   A real-provider configuration example that uses `OPENAI_API_KEY`.
+- `manual-approval-team`
+  Pause the run until a human approves protected actions, then resume from checkpoint.
 
 ## Run one
 
@@ -28,6 +30,15 @@ go run ./cmd/agentteam run --team ./examples/deep-research-team/team.yaml --task
 ```bash
 go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml
 go run ./cmd/agentteam inspect team --team ./examples/software-team/team.yaml --format mermaid
+```
+
+## Try the approval flow
+
+```bash
+go run ./cmd/agentteam run --team ./examples/manual-approval-team/team.yaml --task "Prepare the launch response and guarded rollout plan"
+go run ./cmd/agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run-id>.json
+go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run-id>.json --all
+go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
 ## Switch to a real model provider

@@ -77,10 +77,11 @@ type ChannelConfig struct {
 }
 
 type PolicySpec struct {
-	AllowExternalSkillInstall   bool `yaml:"allow_external_skill_install"`
-	RequireApprovalForExtSkills bool `yaml:"require_approval_for_external_skills"`
-	RequireApprovalForMessages  bool `yaml:"require_approval_for_messages"`
-	RequireApprovalForGitWrite  bool `yaml:"require_approval_for_git_write"`
+	AllowExternalSkillInstall   bool   `yaml:"allow_external_skill_install"`
+	RequireApprovalForExtSkills bool   `yaml:"require_approval_for_external_skills"`
+	RequireApprovalForMessages  bool   `yaml:"require_approval_for_messages"`
+	RequireApprovalForGitWrite  bool   `yaml:"require_approval_for_git_write"`
+	ApprovalMode                string `yaml:"approval_mode"`
 }
 
 type MemoryConfig struct {
@@ -91,6 +92,15 @@ type MemoryConfig struct {
 type BudgetConfig struct {
 	MaxDelegations int `yaml:"max_delegations"`
 	MaxTokens      int `yaml:"max_tokens"`
+}
+
+func (p PolicySpec) Validate() error {
+	switch strings.TrimSpace(p.ApprovalMode) {
+	case "", "auto", "manual":
+		return nil
+	default:
+		return fmt.Errorf("unsupported approval_mode %q", p.ApprovalMode)
+	}
 }
 
 func (t *TeamSpec) Validate() error {
@@ -138,6 +148,9 @@ func (t *TeamSpec) Validate() error {
 	}
 
 	if err := t.Models.Validate(); err != nil {
+		return err
+	}
+	if err := t.Policies.Validate(); err != nil {
 		return err
 	}
 
@@ -228,6 +241,13 @@ func (t *TeamSpec) ResolveMaxAttempts(agent AgentSpec) int {
 		return agent.MaxAttempts
 	}
 	return 1
+}
+
+func (t *TeamSpec) ResolveApprovalMode() string {
+	if strings.TrimSpace(t.Policies.ApprovalMode) == "" {
+		return "auto"
+	}
+	return t.Policies.ApprovalMode
 }
 
 func (t *TeamSpec) ModelProvider(name string) (ProviderSpec, bool) {

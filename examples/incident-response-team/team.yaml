@@ -43,6 +43,8 @@ channels:
     enabled: true
   - kind: telegram
     enabled: false
+    token: "env:TELEGRAM_BOT_TOKEN"
+    allow_from: ["env:TELEGRAM_CHAT_ID"]
 policies:
   allow_external_skill_install: true
   require_approval_for_external_skills: true

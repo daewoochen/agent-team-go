@@ -27,6 +27,12 @@ These examples are designed to show what an agent team can look like before you 
 go run ./cmd/agentteam run --team ./examples/deep-research-team/team.yaml --task "Compare the top Go agent runtimes and propose our launch angle"
 ```
 
+Or let the CLI choose a team for you:
+
+```bash
+go run ./cmd/agentteam auto --task "Prepare an incident response brief for the sev1 outage"
+```
+
 ## Inspect the team before you run it
 
 ```bash
@@ -49,6 +55,13 @@ To stop the run instead of resuming it:
 go run ./cmd/agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run-id>.json --id approval-outbound-message --note "Need a safer rollout first"
 ```
 
+To request changes and re-review the revised draft:
+
+```bash
+go run ./cmd/agentteam approvals request-changes --checkpoint ./.agentteam/checkpoints/<run-id>.json --id approval-outbound-message --note "Add rollback guidance and make the message more conservative"
+go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
+```
+
 ## Try persistent team memory
 
 ```bash
@@ -67,3 +80,10 @@ When you are ready to use a real provider:
 2. Point `api_key_env` at an environment variable such as `OPENAI_API_KEY`
 3. Change agent models from `mock/...` to `openai/...` or your provider prefix
 4. Optionally place the key in a `.env` file in the repo root or next to the team spec
+
+## Deliver to real channels
+
+```bash
+go run ./cmd/agentteam run --team ./examples/assistant-team/team.yaml --task "Draft the launch update" --deliver
+go run ./cmd/agentteam channels deliver --team ./examples/assistant-team/team.yaml --run ./.agentteam/runs/<run-id>.json
+```

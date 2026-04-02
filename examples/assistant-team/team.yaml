@@ -39,14 +39,13 @@ channels:
     enabled: true
   - kind: telegram
     enabled: false
-    token: ""
-    allow_from: ["launch-chat"]
+    token: "env:TELEGRAM_BOT_TOKEN"
+    allow_from: ["env:TELEGRAM_CHAT_ID"]
   - kind: feishu
     enabled: false
-    app_id: ""
-    app_secret: ""
-    mode: webhook
-    allow_from: ["release-room"]
+    app_id: "env:FEISHU_APP_ID"
+    app_secret: "env:FEISHU_APP_SECRET"
+    allow_from: ["env:FEISHU_CHAT_ID"]
 policies:
   allow_external_skill_install: true
   require_approval_for_external_skills: true

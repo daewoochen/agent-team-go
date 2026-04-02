@@ -68,6 +68,7 @@ type ProviderSpec struct {
 type ChannelConfig struct {
 	Kind              string   `yaml:"kind"`
 	Enabled           bool     `yaml:"enabled"`
+	BaseURL           string   `yaml:"base_url,omitempty"`
 	Token             string   `yaml:"token,omitempty"`
 	AllowFrom         []string `yaml:"allow_from,omitempty"`
 	AppID             string   `yaml:"app_id,omitempty"`

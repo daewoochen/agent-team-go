@@ -382,3 +382,94 @@ func TestRunnerEndsRejectedWhenApprovalIsRejected(t *testing.T) {
 		t.Fatalf("expected rejection summary to include note, got %q", resumed.Summary)
 	}
 }
+
+func TestRunnerRevisionRequestLoopsBackToWaitingApproval(t *testing.T) {
+	tmpDir := t.TempDir()
+	team := &spec.TeamSpec{
+		Name:        "revision-team",
+		Description: "Demo",
+		BaseDir:     tmpDir,
+		Models: spec.ModelConfig{
+			DefaultModel: "mock/generalist",
+			Providers: map[string]spec.ProviderSpec{
+				"mock": {
+					Kind: "mock",
+				},
+			},
+		},
+		Agents: []spec.AgentSpec{
+			{Name: "captain", Role: "captain", Goal: "Lead delivery", Model: "mock/captain"},
+			{Name: "planner", Role: "planner", Goal: "Plan the work", Model: "mock/planner"},
+			{Name: "researcher", Role: "researcher", Goal: "Research risks", Model: "mock/researcher"},
+		},
+		Channels: []spec.ChannelConfig{
+			{Kind: "cli", Enabled: true},
+		},
+		Policies: spec.PolicySpec{
+			RequireApprovalForMessages: true,
+			ApprovalMode:               "manual",
+		},
+	}
+
+	runner := NewRunner(tmpDir)
+	initial, err := runner.Run(context.Background(), team, "Ship a public MVP")
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	var checkpoint Checkpoint
+	if err := observe.ReadJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to load checkpoint: %v", err)
+	}
+	checkpoint.Approvals[0].Approved = false
+	checkpoint.Approvals[0].Decision = ApprovalChanges
+	checkpoint.Approvals[0].Note = "Add rollback guidance and a safer communication plan."
+	if err := observe.WriteJSON(initial.CheckpointPath, &checkpoint); err != nil {
+		t.Fatalf("failed to write checkpoint: %v", err)
+	}
+
+	revised, err := runner.Resume(context.Background(), team, initial.CheckpointPath)
+	if err != nil {
+		t.Fatalf("Resume returned error: %v", err)
+	}
+	if revised.Status != RunStatusWaitingApproval {
+		t.Fatalf("expected waiting approval status after revision, got %s", revised.Status)
+	}
+	if pending := countPendingApprovals(revised.Approvals); pending == 0 {
+		t.Fatalf("expected reopened approvals after revision")
+	}
+	if !strings.Contains(revised.Summary, "rollback guidance") {
+		t.Fatalf("expected revised summary to include operator feedback, got %q", revised.Summary)
+	}
+
+	revisionEvent := false
+	for _, event := range revised.Events {
+		if event.Type == "run.revision_requested" {
+			revisionEvent = true
+			break
+		}
+	}
+	if !revisionEvent {
+		t.Fatalf("expected run.revision_requested event")
+	}
+
+	var revisedCheckpoint Checkpoint
+	if err := observe.ReadJSON(initial.CheckpointPath, &revisedCheckpoint); err != nil {
+		t.Fatalf("failed to reload checkpoint: %v", err)
+	}
+	for i := range revisedCheckpoint.Approvals {
+		revisedCheckpoint.Approvals[i].Approved = true
+		revisedCheckpoint.Approvals[i].Decision = ApprovalApproved
+	}
+	if err := observe.WriteJSON(initial.CheckpointPath, &revisedCheckpoint); err != nil {
+		t.Fatalf("failed to write revised checkpoint: %v", err)
+	}
+
+	completed, err := runner.Resume(context.Background(), team, initial.CheckpointPath)
+	if err != nil {
+		t.Fatalf("second Resume returned error: %v", err)
+	}
+	if completed.Status != RunStatusCompleted {
+		t.Fatalf("expected completed status after approval, got %s", completed.Status)
+	}
+}

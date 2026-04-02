@@ -13,6 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/daewoochen/agent-team-go/pkg/autoteam"
 	"github.com/daewoochen/agent-team-go/pkg/channels"
 	"github.com/daewoochen/agent-team-go/pkg/memory"
 	"github.com/daewoochen/agent-team-go/pkg/observe"
@@ -34,6 +35,10 @@ func main() {
 		}
 	case "run":
 		if err := runTeam(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
+	case "auto":
+		if err := runAuto(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
 	case "skills":
@@ -82,17 +87,20 @@ func usage() {
 Usage:
   agentteam init --name demo --dir ./demo
   agentteam run --team ./team.yaml --task "Ship the v0.1 release"
+  agentteam auto --task "Ship the MVP release plan" --deliver
   agentteam skills install --name github --source local --path ./skills/github
   agentteam skills scaffold --name writing --dir ./skills/writing
   agentteam skills search --query telegram
   agentteam skills list --workdir .
   agentteam channels validate --team ./team.yaml
+  agentteam channels deliver --team ./team.yaml --run ./.agentteam/runs/<run>.json
   agentteam models explain --team ./team.yaml
   agentteam models validate --team ./team.yaml
   agentteam memory show --team ./team.yaml
   agentteam replay show --run ./.agentteam/runs/<run>.json
   agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message
+  agentteam approvals request-changes --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Add rollback guidance"
   agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Need a safer rollout"
   agentteam resume --team ./team.yaml --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam inspect team --team ./team.yaml --format text
@@ -178,6 +186,7 @@ func runTeam(args []string) error {
 	teamPath := fs.String("team", "team.yaml", "path to a team spec")
 	task := fs.String("task", "", "task for the team")
 	workDir := fs.String("workdir", ".", "runtime working directory")
+	deliver := fs.Bool("deliver", false, "send prepared deliveries through enabled channels")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -196,27 +205,7 @@ func runTeam(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Run ID: %s\n", result.RunID)
-	fmt.Printf("Status: %s\n", result.Status)
-	fmt.Println()
-	fmt.Println(result.Summary)
-	fmt.Println()
-	if result.PausedReason != "" {
-		fmt.Printf("Paused reason: %s\n\n", result.PausedReason)
-	}
-	if len(result.Deliveries) > 0 {
-		fmt.Println("Prepared deliveries:")
-		for _, delivery := range result.Deliveries {
-			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
-		}
-		fmt.Println()
-	}
-	if result.MemoryPath != "" {
-		fmt.Printf("Memory: %s\n", result.MemoryPath)
-	}
-	fmt.Printf("Replay log: %s\n", result.ReplayPath)
-	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
-	return nil
+	return printRunResult(loaded, result, *deliver)
 }
 
 func runResume(args []string) error {
@@ -224,6 +213,7 @@ func runResume(args []string) error {
 	teamPath := fs.String("team", "team.yaml", "path to a team spec")
 	checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
 	workDir := fs.String("workdir", ".", "runtime working directory")
+	deliver := fs.Bool("deliver", false, "send prepared deliveries through enabled channels")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -242,24 +232,66 @@ func runResume(args []string) error {
 		return err
 	}
 
-	fmt.Printf("Run ID: %s\n", result.RunID)
-	fmt.Printf("Status: %s\n", result.Status)
-	fmt.Println()
-	fmt.Println(result.Summary)
-	fmt.Println()
-	if len(result.Deliveries) > 0 {
-		fmt.Println("Prepared deliveries:")
-		for _, delivery := range result.Deliveries {
-			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
+	return printRunResult(loaded, result, *deliver)
+}
+
+func runAuto(args []string) error {
+	fs := flag.NewFlagSet("auto", flag.ContinueOnError)
+	task := fs.String("task", "", "task for the auto-generated team")
+	profile := fs.String("profile", "auto", "team profile: auto|software|research|incident|content|assistant")
+	workDir := fs.String("workdir", ".", "runtime working directory")
+	name := fs.String("name", "", "optional team name override")
+	save := fs.String("save", "", "optional path to save the generated team spec")
+	deliver := fs.Bool("deliver", false, "send prepared deliveries through enabled channels")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if strings.TrimSpace(*task) == "" {
+		return fmt.Errorf("--task is required")
+	}
+
+	if err := loadDotEnvIfPresent(".env"); err != nil {
+		return err
+	}
+
+	workDirPath := filepath.Clean(*workDir)
+	team, selectedProfile, err := autoteam.Build(*task, autoteam.Options{
+		Profile: *profile,
+		WorkDir: workDirPath,
+		Name:    *name,
+	})
+	if err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(*save) != "" {
+		content, err := yaml.Marshal(team)
+		if err != nil {
+			return err
 		}
-		fmt.Println()
+		savePath := filepath.Clean(*save)
+		if err := os.MkdirAll(filepath.Dir(savePath), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(savePath, content, 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("Saved auto-generated team to %s\n", savePath)
 	}
-	if result.MemoryPath != "" {
-		fmt.Printf("Memory: %s\n", result.MemoryPath)
+
+	fmt.Printf("Auto profile: %s\n", selectedProfile)
+	fmt.Println("Agents:")
+	for _, agent := range team.Agents {
+		fmt.Printf("- %s [%s]\n", agent.Name, agent.Role)
 	}
-	fmt.Printf("Replay log: %s\n", result.ReplayPath)
-	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
-	return nil
+	fmt.Println()
+
+	runner := runtime.NewRunner(workDirPath)
+	result, err := runner.Run(context.Background(), team, *task)
+	if err != nil {
+		return err
+	}
+	return printRunResult(team, result, *deliver)
 }
 
 func runApprovals(args []string) error {
@@ -285,6 +317,7 @@ func runApprovals(args []string) error {
 		fmt.Printf("Run ID: %s\n", checkpoint.RunID)
 		fmt.Printf("Status: %s\n", checkpoint.Status)
 		fmt.Printf("Pending approvals: %d\n", pendingApprovals(checkpoint.Approvals))
+		fmt.Printf("Requested changes: %d\n", requestedChangesApprovals(checkpoint.Approvals))
 		fmt.Printf("Rejected approvals: %d\n", rejectedApprovals(checkpoint.Approvals))
 		for _, approval := range checkpoint.Approvals {
 			if approval.Note != "" {
@@ -348,6 +381,59 @@ func runApprovals(args []string) error {
 			return err
 		}
 		fmt.Printf("Approved %d approval(s).\n", approvedCount)
+		return nil
+	case "request-changes":
+		fs := flag.NewFlagSet("approvals request-changes", flag.ContinueOnError)
+		checkpointPath := fs.String("checkpoint", "", "path to a checkpoint file")
+		approvalID := fs.String("id", "", "approval id to request changes for")
+		requestAll := fs.Bool("all", false, "request changes on all approvals")
+		note := fs.String("note", "", "operator note explaining what should change")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*checkpointPath) == "" {
+			return fmt.Errorf("--checkpoint is required")
+		}
+		if !*requestAll && strings.TrimSpace(*approvalID) == "" {
+			return fmt.Errorf("--id or --all is required")
+		}
+		if strings.TrimSpace(*note) == "" {
+			return fmt.Errorf("--note is required to request changes")
+		}
+
+		checkpoint, err := loadCheckpoint(*checkpointPath)
+		if err != nil {
+			return err
+		}
+
+		changedCount := 0
+		for i := range checkpoint.Approvals {
+			if !*requestAll && checkpoint.Approvals[i].ID != *approvalID {
+				continue
+			}
+			checkpoint.Approvals[i].Approved = false
+			checkpoint.Approvals[i].Decision = runtime.ApprovalChanges
+			checkpoint.Approvals[i].Note = strings.TrimSpace(*note)
+			changed := checkpoint.Approvals[i]
+			checkpoint.Events = append(checkpoint.Events, runtime.RunEvent{
+				Timestamp: time.Now().UTC(),
+				Type:      "approval.changes_requested",
+				Actor:     "operator",
+				Message:   fmt.Sprintf("Requested changes for %s", changed.ID),
+				Approval:  &changed,
+			})
+			changedCount++
+		}
+		if changedCount == 0 {
+			return fmt.Errorf("no matching approval found to request changes")
+		}
+		if err := saveCheckpoint(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		if err := syncReplayApprovals(*checkpointPath, checkpoint); err != nil {
+			return err
+		}
+		fmt.Printf("Requested changes for %d approval(s).\n", changedCount)
 		return nil
 	case "reject":
 		fs := flag.NewFlagSet("approvals reject", flag.ContinueOnError)
@@ -524,6 +610,25 @@ func runChannels(args []string) error {
 		}
 		fmt.Println("Channel configuration looks good.")
 		return nil
+	case "deliver":
+		fs := flag.NewFlagSet("channels deliver", flag.ContinueOnError)
+		teamPath := fs.String("team", "team.yaml", "path to a team spec")
+		runPath := fs.String("run", "", "path to a replay log")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*runPath) == "" {
+			return fmt.Errorf("--run is required")
+		}
+		loaded, err := loadTeamWithEnv(*teamPath)
+		if err != nil {
+			return err
+		}
+		var result runtime.RunResult
+		if err := observe.ReadJSON(*runPath, &result); err != nil {
+			return err
+		}
+		return deliverPreparedRun(loaded, &result)
 	default:
 		return fmt.Errorf("unknown channels subcommand %q", args[0])
 	}
@@ -775,7 +880,17 @@ func replayPathFromCheckpoint(checkpointPath, runID string) string {
 func pendingApprovals(approvals []runtime.ApprovalRequest) int {
 	count := 0
 	for _, approval := range approvals {
-		if !approval.IsApproved() && !approval.IsRejected() {
+		if approval.IsPending() {
+			count++
+		}
+	}
+	return count
+}
+
+func requestedChangesApprovals(approvals []runtime.ApprovalRequest) int {
+	count := 0
+	for _, approval := range approvals {
+		if approval.HasRequestedChanges() {
 			count++
 		}
 	}
@@ -924,4 +1039,53 @@ func mermaidNodeID(name string) string {
 func exitErr(err error) {
 	fmt.Fprintln(os.Stderr, "error:", err)
 	os.Exit(1)
+}
+
+func printRunResult(team *spec.TeamSpec, result *runtime.RunResult, deliver bool) error {
+	fmt.Printf("Run ID: %s\n", result.RunID)
+	fmt.Printf("Status: %s\n", result.Status)
+	fmt.Println()
+	fmt.Println(result.Summary)
+	fmt.Println()
+	if result.PausedReason != "" {
+		fmt.Printf("Paused reason: %s\n\n", result.PausedReason)
+	}
+	if len(result.Deliveries) > 0 {
+		fmt.Println("Prepared deliveries:")
+		for _, delivery := range result.Deliveries {
+			fmt.Printf("- %s -> %s (%s)\n", delivery.Channel, delivery.Target, delivery.Mode)
+		}
+		fmt.Println()
+	}
+	if deliver {
+		if err := deliverPreparedRun(team, result); err != nil {
+			return err
+		}
+		fmt.Println()
+	}
+	if result.MemoryPath != "" {
+		fmt.Printf("Memory: %s\n", result.MemoryPath)
+	}
+	fmt.Printf("Replay log: %s\n", result.ReplayPath)
+	fmt.Printf("Checkpoint: %s\n", result.CheckpointPath)
+	return nil
+}
+
+func deliverPreparedRun(team *spec.TeamSpec, result *runtime.RunResult) error {
+	reports, err := channels.DeliverPrepared(context.Background(), team, result.Deliveries)
+	if len(reports) > 0 {
+		fmt.Println("Delivery results:")
+		for _, report := range reports {
+			if report.Detail != "" {
+				fmt.Printf("- %s -> %s status=%s detail=%s\n", report.Channel, report.Target, report.Status, report.Detail)
+				continue
+			}
+			if report.MessageID != "" {
+				fmt.Printf("- %s -> %s status=%s message_id=%s\n", report.Channel, report.Target, report.Status, report.MessageID)
+				continue
+			}
+			fmt.Printf("- %s -> %s status=%s\n", report.Channel, report.Target, report.Status)
+		}
+	}
+	return err
 }

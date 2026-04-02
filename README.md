@@ -34,9 +34,10 @@ This repository is the first public release of that direction.
 - `Replay Logs`: every run emits events and artifacts that can be replayed later
 - `Checkpoints + Approvals`: runs persist checkpoints and approval events for safer execution
 - `Team Memory`: compact history from earlier runs feeds into future planning and synthesis
+- `Revision Loop`: operators can request changes, resume the run, and re-review the revised draft
 - `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
 - `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
-- `Channel Delivery Previews`: enabled channels produce delivery payload previews before you wire real bots
+- `Real Delivery`: enabled channels can send real Telegram and Feishu messages, not only previews
 - `Pause / Resume`: manual approval mode can pause a run, persist state, and resume after a human decision
 
 ## Quick start
@@ -49,6 +50,13 @@ cd agent-team-go
 go run ./cmd/agentteam run \
   --team ./examples/software-team/team.yaml \
   --task "Launch the public MVP and de-risk the first release"
+```
+
+### 1.5 Just give it a task
+
+```bash
+go run ./cmd/agentteam auto \
+  --task "Compare the top Go agent runtimes and propose our launch angle"
 ```
 
 ### 2. Validate channels
@@ -125,6 +133,17 @@ go run ./cmd/agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<
 go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
 ```
 
+If the operator wants the team to revise the draft instead of approving immediately:
+
+```bash
+go run ./cmd/agentteam approvals request-changes \
+  --checkpoint ./.agentteam/checkpoints/<run-id>.json \
+  --id approval-outbound-message \
+  --note "Add rollback guidance and make the customer message more conservative"
+
+go run ./cmd/agentteam resume --team ./examples/manual-approval-team/team.yaml --checkpoint ./.agentteam/checkpoints/<run-id>.json
+```
+
 If the operator wants to stop the run instead of continuing:
 
 ```bash
@@ -141,7 +160,33 @@ go run ./cmd/agentteam approvals reject \
 - Validates model provider configuration and API key env bindings
 - Ensures required skills are installed before a run
 - Runs a hierarchical team loop with structured delegations, retries, and dependency-aware scheduling
-- Produces work items, approvals, artifacts, checkpoints, replay logs, compact team memory, channel delivery previews, and resumable paused runs
+- Produces work items, approvals, artifacts, checkpoints, replay logs, compact team memory, real or preview deliveries, and resumable paused runs
+
+## Real Telegram and Feishu delivery
+
+Use environment bindings in `team.yaml`:
+
+```yaml
+channels:
+  - kind: telegram
+    enabled: true
+    token: env:TELEGRAM_BOT_TOKEN
+    allow_from: [env:TELEGRAM_CHAT_ID]
+  - kind: feishu
+    enabled: true
+    app_id: env:FEISHU_APP_ID
+    app_secret: env:FEISHU_APP_SECRET
+    allow_from: [env:FEISHU_CHAT_ID]
+```
+
+Then send the prepared deliveries:
+
+```bash
+go run ./cmd/agentteam run --team ./examples/assistant-team/team.yaml --task "Draft the launch update" --deliver
+go run ./cmd/agentteam channels deliver --team ./examples/assistant-team/team.yaml --run ./.agentteam/runs/<run-id>.json
+```
+
+`token`, `app_id`, `app_secret`, and `allow_from` entries all support `env:VAR_NAME` so you can keep secrets out of committed YAML.
 
 ## Persistent team memory
 
@@ -198,6 +243,22 @@ go run ./cmd/agentteam models validate --team ./team.yaml
 
 `agentteam` will also auto-load a `.env` file from the current working directory and the team spec directory when present. The repo ships an [.env.example](./.env.example) file with common variable names.
 
+## Auto-generated teams
+
+If you want the easiest path, use the auto mode.
+
+```bash
+go run ./cmd/agentteam auto --task "Prepare an incident response brief for the sev1 outage"
+```
+
+The CLI will:
+
+1. Classify the task into a built-in team profile such as software, research, incident, content, or assistant.
+2. Build a ready-to-run team with captain/planner/specialists.
+3. Enable persistent memory by default.
+4. Automatically use OpenAI if `OPENAI_API_KEY` is present, otherwise fall back to deterministic mock providers.
+5. Auto-enable Telegram or Feishu delivery when the relevant env vars are present.
+
 ## Example architecture
 
 ```mermaid
@@ -234,6 +295,8 @@ flowchart TD
    A small team plans, drafts, and reviews launch assets using reusable skills.
 8. `Release Memory Team`
    A recurring release team remembers prior risks, decisions, and follow-up tasks across runs.
+9. `Auto Team`
+   Give the CLI a task and let it choose the agent mix for you.
 
 More example specs live in [examples/README.md](./examples/README.md).
 If you want a real provider example, start from [examples/openai-launch-team/team.yaml](./examples/openai-launch-team/team.yaml).
@@ -287,8 +350,11 @@ docs/                  # Extra documentation
 - prepared channel delivery previews in run output and replay logs
 - manual approval mode with checkpoint-backed `approvals show/approve` and `resume`
 - approval rejection and operator notes that flow back into resumed runs
+- request-changes approval loops that revise the draft and reopen approvals for re-review
 - replay inspection via `agentteam replay show`
 - persistent team memory with `agentteam memory show`
+- auto-generated teams via `agentteam auto`
+- real Telegram and Feishu delivery via `--deliver` and `channels deliver`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams
 

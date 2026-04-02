@@ -143,6 +143,16 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		})
 	}
 
+	requestedChanges := countRequestedChangesApprovals(state.approvals)
+	if checkpoint != nil && requestedChanges > 0 {
+		resetForRevision(&state)
+		appendEvent(RunEvent{
+			Type:    "run.revision_requested",
+			Actor:   captain.Name,
+			Message: fmt.Sprintf("Operator requested changes on %d approval(s); the team is revising the draft.", requestedChanges),
+		})
+	}
+
 	if rejected := countRejectedApprovals(state.approvals); rejected > 0 {
 		state.status = RunStatusRejected
 		state.pausedReason = ""
@@ -155,16 +165,18 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		return r.persistState(state)
 	}
 
-	if pending := countPendingApprovals(state.approvals); pending > 0 {
-		state.status = RunStatusWaitingApproval
-		state.pausedReason = fmt.Sprintf("%d approval(s) still pending", pending)
-		state.summary = fmt.Sprintf("Run paused waiting for %d approval(s). Use `agentteam approvals show`, `agentteam approvals approve` or `agentteam approvals reject`, then `agentteam resume` if the run should continue.", pending)
-		appendEvent(RunEvent{
-			Type:    "run.paused",
-			Actor:   captain.Name,
-			Message: state.pausedReason,
-		})
-		return r.persistState(state)
+	if requestedChanges == 0 {
+		if pending := countPendingApprovals(state.approvals); pending > 0 {
+			state.status = RunStatusWaitingApproval
+			state.pausedReason = fmt.Sprintf("%d approval(s) still pending", pending)
+			state.summary = fmt.Sprintf("Run paused waiting for %d approval(s). Use `agentteam approvals show`, `agentteam approvals approve`, `agentteam approvals request-changes` or `agentteam approvals reject`, then `agentteam resume` if the run should continue.", pending)
+			appendEvent(RunEvent{
+				Type:    "run.paused",
+				Actor:   captain.Name,
+				Message: state.pausedReason,
+			})
+			return r.persistState(state)
+		}
 	}
 
 	if checkpoint == nil {
@@ -365,6 +377,18 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 		})
 	}
 
+	if requestedChanges > 0 {
+		reopened := reopenRequestedChangesApprovals(&state.approvals, now, appendEvent)
+		state.status = RunStatusWaitingApproval
+		state.pausedReason = fmt.Sprintf("Revised the draft after %d change request(s); waiting for re-review.", reopened)
+		appendEvent(RunEvent{
+			Type:    "run.paused",
+			Actor:   captain.Name,
+			Message: state.pausedReason,
+		})
+		return r.persistState(state)
+	}
+
 	state.pausedReason = ""
 	if failed := countFailedWorkItems(state.workItems); failed > 0 {
 		state.status = RunStatusCompletedWithFailures
@@ -399,7 +423,7 @@ func (r *Runner) run(ctx context.Context, team *spec.TeamSpec, checkpoint *Check
 }
 
 func (r *Runner) newExecutionState(team *spec.TeamSpec, task string, checkpoint *Checkpoint, memoryStore *memory.Store) (executionState, error) {
-	runID := time.Now().UTC().Format("20060102T150405Z")
+	runID := time.Now().UTC().Format("20060102T150405.000000000Z")
 	if checkpoint != nil && checkpoint.RunID != "" {
 		runID = checkpoint.RunID
 	}
@@ -879,7 +903,17 @@ func dependencyState(items []WorkItem, item WorkItem) (depState, string) {
 func countPendingApprovals(approvals []ApprovalRequest) int {
 	count := 0
 	for _, approval := range approvals {
-		if !approval.IsApproved() && !approval.IsRejected() {
+		if approval.IsPending() {
+			count++
+		}
+	}
+	return count
+}
+
+func countRequestedChangesApprovals(approvals []ApprovalRequest) int {
+	count := 0
+	for _, approval := range approvals {
+		if approval.HasRequestedChanges() {
 			count++
 		}
 	}
@@ -892,6 +926,37 @@ func countRejectedApprovals(approvals []ApprovalRequest) int {
 		if approval.IsRejected() {
 			count++
 		}
+	}
+	return count
+}
+
+func resetForRevision(state *executionState) {
+	state.status = RunStatusRunning
+	state.pausedReason = ""
+	state.planSummary = ""
+	state.summary = ""
+	state.artifacts = nil
+	state.workItems = nil
+	state.deliveries = nil
+}
+
+func reopenRequestedChangesApprovals(approvals *[]ApprovalRequest, now func() time.Time, appendEvent func(RunEvent)) int {
+	count := 0
+	for i := range *approvals {
+		if !(*approvals)[i].HasRequestedChanges() {
+			continue
+		}
+		(*approvals)[i].Approved = false
+		(*approvals)[i].Decision = ApprovalPending
+		approvalCopy := (*approvals)[i]
+		appendEvent(RunEvent{
+			Timestamp: now(),
+			Type:      "approval.reopened",
+			Actor:     "operator",
+			Message:   fmt.Sprintf("Reopened %s for re-review", approvalCopy.ID),
+			Approval:  &approvalCopy,
+		})
+		count++
 	}
 	return count
 }

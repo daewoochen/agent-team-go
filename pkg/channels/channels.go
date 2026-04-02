@@ -41,11 +41,11 @@ func (a adapter) Validate(cfg spec.ChannelConfig) error {
 	case "cli":
 		return nil
 	case "telegram":
-		if cfg.Enabled && cfg.Token == "" {
+		if cfg.Enabled && resolveSecret(cfg.Token) == "" {
 			return fmt.Errorf("telegram channel requires token when enabled")
 		}
 	case "feishu":
-		if cfg.Enabled && (cfg.AppID == "" || cfg.AppSecret == "") {
+		if cfg.Enabled && (resolveSecret(cfg.AppID) == "" || resolveSecret(cfg.AppSecret) == "") {
 			return fmt.Errorf("feishu channel requires app_id and app_secret when enabled")
 		}
 	}
@@ -72,10 +72,10 @@ func (a adapter) BuildDelivery(cfg spec.ChannelConfig, ctx DeliveryContext) (Del
 		delivery.Target = "stdout"
 		delivery.Mode = "local"
 	case "telegram":
-		delivery.Target = joinTargets(cfg.AllowFrom, "configured-chat")
+		delivery.Target = joinTargets(resolveTargets(cfg.AllowFrom), "configured-chat")
 		delivery.Mode = "bot"
 	case "feishu":
-		delivery.Target = joinTargets(cfg.AllowFrom, "configured-chat")
+		delivery.Target = joinTargets(resolveTargets(cfg.AllowFrom), "configured-chat")
 		if cfg.Mode != "" {
 			delivery.Mode = cfg.Mode
 		} else {

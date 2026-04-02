@@ -21,6 +21,7 @@ const (
 
 	ApprovalPending  ApprovalDecision = "pending"
 	ApprovalApproved ApprovalDecision = "approved"
+	ApprovalChanges  ApprovalDecision = "changes_requested"
 	ApprovalRejected ApprovalDecision = "rejected"
 
 	RunStatusRunning               RunStatus = "running"
@@ -132,6 +133,14 @@ func (a ApprovalRequest) IsApproved() bool {
 		return a.Decision == ApprovalApproved
 	}
 	return a.Approved
+}
+
+func (a ApprovalRequest) IsPending() bool {
+	return a.Decision == "" || a.Decision == ApprovalPending
+}
+
+func (a ApprovalRequest) HasRequestedChanges() bool {
+	return a.Decision == ApprovalChanges
 }
 
 func (a ApprovalRequest) IsRejected() bool {

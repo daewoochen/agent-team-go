@@ -33,6 +33,12 @@ Or let the CLI choose a team for you:
 go run ./cmd/agentteam auto --task "Prepare an incident response brief for the sev1 outage"
 ```
 
+Or run the webhook gateway:
+
+```bash
+go run ./cmd/agentteam serve --listen :8080 --deliver
+```
+
 ## Inspect the team before you run it
 
 ```bash

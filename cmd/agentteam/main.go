@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/daewoochen/agent-team-go/pkg/autoteam"
 	"github.com/daewoochen/agent-team-go/pkg/channels"
+	"github.com/daewoochen/agent-team-go/pkg/gateway"
 	"github.com/daewoochen/agent-team-go/pkg/memory"
 	"github.com/daewoochen/agent-team-go/pkg/observe"
 	"github.com/daewoochen/agent-team-go/pkg/runtime"
@@ -39,6 +41,10 @@ func main() {
 		}
 	case "auto":
 		if err := runAuto(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
+	case "serve":
+		if err := runServe(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
 	case "skills":
@@ -88,6 +94,7 @@ Usage:
   agentteam init --name demo --dir ./demo
   agentteam run --team ./team.yaml --task "Ship the v0.1 release"
   agentteam auto --task "Ship the MVP release plan" --deliver
+  agentteam serve --listen :8080 --deliver
   agentteam skills install --name github --source local --path ./skills/github
   agentteam skills scaffold --name writing --dir ./skills/writing
   agentteam skills search --query telegram
@@ -292,6 +299,30 @@ func runAuto(args []string) error {
 		return err
 	}
 	return printRunResult(team, result, *deliver)
+}
+
+func runServe(args []string) error {
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	listen := fs.String("listen", ":8080", "address to listen on")
+	workDir := fs.String("workdir", ".", "runtime working directory")
+	profile := fs.String("profile", "auto", "auto-team profile: auto|software|research|incident|content|assistant")
+	deliver := fs.Bool("deliver", true, "send the generated response back through the source channel")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	if err := loadDotEnvIfPresent(".env"); err != nil {
+		return err
+	}
+
+	workDirPath := filepath.Clean(*workDir)
+	server := gateway.NewServer(workDirPath, *profile, *deliver)
+	handler := server.Handler()
+	fmt.Printf("agentteam gateway listening on %s\n", *listen)
+	fmt.Printf("Health:   http://127.0.0.1%s/healthz\n", *listen)
+	fmt.Printf("Telegram: http://127.0.0.1%s/webhooks/telegram\n", *listen)
+	fmt.Printf("Feishu:   http://127.0.0.1%s/webhooks/feishu\n", *listen)
+	return http.ListenAndServe(*listen, handler)
 }
 
 func runApprovals(args []string) error {

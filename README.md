@@ -38,6 +38,7 @@ This repository is the first public release of that direction.
 - `Model Bindings`: each agent can declare its own model while providers are configured once at the team level
 - `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
 - `Real Delivery`: enabled channels can send real Telegram and Feishu messages, not only previews
+- `Incoming Gateway`: Telegram and Feishu webhook events can trigger auto-generated teams directly
 - `Pause / Resume`: manual approval mode can pause a run, persist state, and resume after a human decision
 
 ## Quick start
@@ -57,6 +58,12 @@ go run ./cmd/agentteam run \
 ```bash
 go run ./cmd/agentteam auto \
   --task "Compare the top Go agent runtimes and propose our launch angle"
+```
+
+### 1.6 Run it as a bot backend
+
+```bash
+go run ./cmd/agentteam serve --listen :8080 --deliver
 ```
 
 ### 2. Validate channels
@@ -187,6 +194,45 @@ go run ./cmd/agentteam channels deliver --team ./examples/assistant-team/team.ya
 ```
 
 `token`, `app_id`, `app_secret`, and `allow_from` entries all support `env:VAR_NAME` so you can keep secrets out of committed YAML.
+
+## Incoming webhook gateway
+
+If you want a dumb-simple bot backend, run:
+
+```bash
+go run ./cmd/agentteam serve --listen :8080 --deliver
+```
+
+Endpoints:
+
+```text
+POST /webhooks/telegram
+POST /webhooks/feishu
+GET  /healthz
+```
+
+What happens on each incoming message:
+
+1. The gateway normalizes the message into a task.
+2. `agent-team-go` auto-selects a team profile such as research, incident, or software.
+3. The team runs with memory enabled.
+4. The final summary is sent back to the source Telegram chat or Feishu chat when `--deliver` is enabled.
+
+Telegram example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/webhooks/telegram \
+  -H 'Content-Type: application/json' \
+  -d '{"message":{"text":"Prepare an incident response brief","chat":{"id":12345},"from":{"id":7}}}'
+```
+
+Feishu example:
+
+```bash
+curl -X POST http://127.0.0.1:8080/webhooks/feishu \
+  -H 'Content-Type: application/json' \
+  -d '{"header":{"event_type":"im.message.receive_v1"},"event":{"sender":{"sender_id":{"open_id":"ou_x"}},"message":{"chat_id":"oc_123","message_type":"text","content":"{\"text\":\"Draft the launch update\"}"}}}'
+```
 
 ## Persistent team memory
 
@@ -355,6 +401,7 @@ docs/                  # Extra documentation
 - persistent team memory with `agentteam memory show`
 - auto-generated teams via `agentteam auto`
 - real Telegram and Feishu delivery via `--deliver` and `channels deliver`
+- incoming webhook gateway via `agentteam serve`
 - checkpoint persistence under `.agentteam/checkpoints/`
 - richer example cases for research, incident response, and content teams
 

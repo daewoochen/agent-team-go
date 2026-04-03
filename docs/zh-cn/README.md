@@ -23,6 +23,7 @@
 - 提供 `cli`、`telegram`、`feishu` 三类渠道配置模型
 - 支持为启用的渠道生成 delivery preview
 - 支持把结果真实投递到 Telegram / Feishu
+- 支持 Telegram / Feishu incoming webhook 直接触发 team run
 - 每次运行都会输出 replay log 到 `.agentteam/runs/`
 - 每次运行都会输出 checkpoint 到 `.agentteam/checkpoints/`
 - 支持 file-backed team memory，并把最近几次运行结论注入后续任务
@@ -43,6 +44,12 @@ go run ./cmd/agentteam run \
 ```bash
 go run ./cmd/agentteam auto \
   --task "比较主流 Go Agent Runtime，并给出我们的产品定位建议"
+```
+
+如果你想把它直接当成 bot 后端跑起来：
+
+```bash
+go run ./cmd/agentteam serve --listen :8080 --deliver
 ```
 
 运行后你会看到：
@@ -159,6 +166,27 @@ channels:
 go run ./cmd/agentteam run --team ./examples/assistant-team/team.yaml --task "整理发布更新并发送到群里" --deliver
 go run ./cmd/agentteam channels deliver --team ./examples/assistant-team/team.yaml --run ./.agentteam/runs/<run-id>.json
 ```
+
+如果你希望外部消息直接触发 team run，可以起 gateway：
+
+```bash
+go run ./cmd/agentteam serve --listen :8080 --deliver
+```
+
+它会提供这些入口：
+
+```text
+POST /webhooks/telegram
+POST /webhooks/feishu
+GET  /healthz
+```
+
+收到消息后会自动：
+
+1. 解析消息内容
+2. 自动选择 team profile
+3. 执行 agent team
+4. 把结果回发到原来的 Telegram chat 或 Feishu chat
 
 ### Models
 

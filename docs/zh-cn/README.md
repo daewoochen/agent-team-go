@@ -24,6 +24,7 @@
 - 支持为启用的渠道生成 delivery preview
 - 支持把结果真实投递到 Telegram / Feishu
 - 支持 Telegram / Feishu incoming webhook 直接触发 team run
+- 支持按聊天会话保存 profile 偏好、最近对话和上次 run 摘要
 - 每次运行都会输出 replay log 到 `.agentteam/runs/`
 - 每次运行都会输出 checkpoint 到 `.agentteam/checkpoints/`
 - 支持 file-backed team memory，并把最近几次运行结论注入后续任务
@@ -50,6 +51,16 @@ go run ./cmd/agentteam auto \
 
 ```bash
 go run ./cmd/agentteam serve --listen :8080 --deliver
+```
+
+跑起来后，用户可以直接在聊天里用这些控制命令：
+
+```text
+/help
+/memory
+/reset
+/profile research
+/profile assistant 帮我起草发布说明
 ```
 
 运行后你会看到：
@@ -187,6 +198,38 @@ GET  /healthz
 2. 自动选择 team profile
 3. 执行 agent team
 4. 把结果回发到原来的 Telegram chat 或 Feishu chat
+
+现在每个 chat 还会拥有自己的轻量会话状态，保存在 `.agentteam/sessions/`。这让 bot 具备几个很实用的能力：
+
+- 记住当前 chat 偏好的 team profile
+- 把最近几轮用户消息和团队摘要注入下一次任务
+- 在不改配置的情况下支持“继续刚才那个话题”
+
+支持的聊天命令：
+
+```text
+/help
+/memory
+/reset
+/profile <auto|software|research|incident|content|assistant>
+/profile <profile> <task>
+```
+
+一个典型的傻瓜式使用方式是：
+
+1. 先发 `/profile incident`
+2. 再发 “总结这次 sev1 事故的影响范围”
+3. 接着发 “把刚才内容改成对外同步版本”
+
+这样 bot 会沿用同一个会话上下文和 profile，不需要用户每次重新解释背景。
+
+你也可以在本地查看和重置这些会话：
+
+```bash
+go run ./cmd/agentteam sessions list --workdir .
+go run ./cmd/agentteam sessions show --channel telegram --target 12345
+go run ./cmd/agentteam sessions reset --channel telegram --target 12345
+```
 
 ### Models
 

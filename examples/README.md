@@ -39,6 +39,16 @@ Or run the webhook gateway:
 go run ./cmd/agentteam serve --listen :8080 --deliver
 ```
 
+When the bot is running, you can control a chat session with:
+
+```text
+/help
+/memory
+/reset
+/profile research
+/profile assistant Draft the launch update
+```
+
 ## Inspect the team before you run it
 
 ```bash
@@ -92,4 +102,12 @@ When you are ready to use a real provider:
 ```bash
 go run ./cmd/agentteam run --team ./examples/assistant-team/team.yaml --task "Draft the launch update" --deliver
 go run ./cmd/agentteam channels deliver --team ./examples/assistant-team/team.yaml --run ./.agentteam/runs/<run-id>.json
+```
+
+## Inspect saved bot sessions
+
+```bash
+go run ./cmd/agentteam sessions list --workdir .
+go run ./cmd/agentteam sessions show --channel telegram --target 12345
+go run ./cmd/agentteam sessions reset --channel telegram --target 12345
 ```

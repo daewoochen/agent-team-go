@@ -75,6 +75,10 @@ func main() {
 		if err := runApprovals(os.Args[2:]); err != nil {
 			exitErr(err)
 		}
+	case "sessions":
+		if err := runSessions(os.Args[2:]); err != nil {
+			exitErr(err)
+		}
 	case "inspect":
 		if err := runInspect(os.Args[2:]); err != nil {
 			exitErr(err)
@@ -107,9 +111,12 @@ Usage:
   agentteam replay show --run ./.agentteam/runs/<run>.json
   agentteam approvals show --checkpoint ./.agentteam/checkpoints/<run>.json
   agentteam approvals approve --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message
-  agentteam approvals request-changes --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Add rollback guidance"
+ agentteam approvals request-changes --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Add rollback guidance"
   agentteam approvals reject --checkpoint ./.agentteam/checkpoints/<run>.json --id approval-outbound-message --note "Need a safer rollout"
   agentteam resume --team ./team.yaml --checkpoint ./.agentteam/checkpoints/<run>.json
+  agentteam sessions list --workdir .
+  agentteam sessions show --channel telegram --target 12345
+  agentteam sessions reset --channel telegram --target 12345
   agentteam inspect team --team ./team.yaml --format text
   agentteam version`)
 }
@@ -776,6 +783,110 @@ func runMemory(args []string) error {
 		return nil
 	default:
 		return fmt.Errorf("unknown memory subcommand %q", args[0])
+	}
+}
+
+func runSessions(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("expected a sessions subcommand")
+	}
+
+	switch args[0] {
+	case "list":
+		fs := flag.NewFlagSet("sessions list", flag.ContinueOnError)
+		workDir := fs.String("workdir", ".", "runtime working directory")
+		channel := fs.String("channel", "", "optional channel filter: telegram|feishu")
+		limit := fs.Int("limit", 20, "max number of sessions to show")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+
+		store := gateway.NewSessionStore(filepath.Clean(*workDir), 12)
+		sessions, err := store.List()
+		if err != nil {
+			return err
+		}
+
+		filtered := make([]gateway.Session, 0, len(sessions))
+		for _, session := range sessions {
+			if strings.TrimSpace(*channel) != "" && session.Channel != strings.TrimSpace(*channel) {
+				continue
+			}
+			filtered = append(filtered, session)
+		}
+		if len(filtered) == 0 {
+			fmt.Println("No saved sessions found.")
+			return nil
+		}
+
+		show := *limit
+		if show <= 0 || show > len(filtered) {
+			show = len(filtered)
+		}
+		fmt.Printf("Sessions: %d\n", len(filtered))
+		for _, session := range filtered[:show] {
+			line := fmt.Sprintf("- %s target=%s", session.Channel, session.Target)
+			if session.PreferredProfile != "" {
+				line += fmt.Sprintf(" profile=%s", session.PreferredProfile)
+			}
+			if session.LastRunID != "" {
+				line += fmt.Sprintf(" run=%s", session.LastRunID)
+			}
+			if !session.UpdatedAt.IsZero() {
+				line += fmt.Sprintf(" updated=%s", session.UpdatedAt.Format(timeFormat))
+			}
+			if session.LastSummary != "" {
+				line += fmt.Sprintf(" summary=%q", firstLine(session.LastSummary))
+			}
+			fmt.Println(line)
+		}
+		return nil
+	case "show":
+		fs := flag.NewFlagSet("sessions show", flag.ContinueOnError)
+		channel := fs.String("channel", "", "channel kind: telegram|feishu")
+		target := fs.String("target", "", "chat target id")
+		workDir := fs.String("workdir", ".", "runtime working directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*channel) == "" || strings.TrimSpace(*target) == "" {
+			return fmt.Errorf("--channel and --target are required")
+		}
+
+		store := gateway.NewSessionStore(filepath.Clean(*workDir), 12)
+		session, err := store.Load(gateway.InboundMessage{
+			Channel: *channel,
+			Target:  *target,
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Println(gateway.FormatSession(session, 8))
+		return nil
+	case "reset":
+		fs := flag.NewFlagSet("sessions reset", flag.ContinueOnError)
+		channel := fs.String("channel", "", "channel kind: telegram|feishu")
+		target := fs.String("target", "", "chat target id")
+		workDir := fs.String("workdir", ".", "runtime working directory")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
+		}
+		if strings.TrimSpace(*channel) == "" || strings.TrimSpace(*target) == "" {
+			return fmt.Errorf("--channel and --target are required")
+		}
+
+		store := gateway.NewSessionStore(filepath.Clean(*workDir), 12)
+		msg := gateway.InboundMessage{
+			Channel: *channel,
+			Target:  *target,
+		}
+		if err := store.Delete(msg); err != nil {
+			return err
+		}
+		fmt.Printf("Reset session for %s/%s\n", *channel, *target)
+		return nil
+	default:
+		return fmt.Errorf("unknown sessions subcommand %q", args[0])
 	}
 }
 

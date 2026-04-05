@@ -39,6 +39,7 @@ This repository is the first public release of that direction.
 - `Retry-Aware Execution`: work items can retry and surface blocked dependencies instead of failing silently
 - `Real Delivery`: enabled channels can send real Telegram and Feishu messages, not only previews
 - `Incoming Gateway`: Telegram and Feishu webhook events can trigger auto-generated teams directly
+- `Session-Aware Bots`: every chat keeps profile preference, recent turns, and last run summary
 - `Pause / Resume`: manual approval mode can pause a run, persist state, and resume after a human decision
 
 ## Quick start
@@ -64,6 +65,16 @@ go run ./cmd/agentteam auto \
 
 ```bash
 go run ./cmd/agentteam serve --listen :8080 --deliver
+```
+
+Then talk to the bot with simple control commands:
+
+```text
+/help
+/memory
+/reset
+/profile research
+/profile assistant Draft the launch update
 ```
 
 ### 2. Validate channels
@@ -217,6 +228,34 @@ What happens on each incoming message:
 2. `agent-team-go` auto-selects a team profile such as research, incident, or software.
 3. The team runs with memory enabled.
 4. The final summary is sent back to the source Telegram chat or Feishu chat when `--deliver` is enabled.
+
+Each chat also gets its own lightweight session state under `.agentteam/sessions/`, so follow-up messages can reuse the recent conversation, remember a preferred profile, and keep the bot feeling continuous instead of stateless.
+
+Supported chat commands:
+
+```text
+/help
+/memory
+/reset
+/profile <auto|software|research|incident|content|assistant>
+/profile <profile> <task>
+```
+
+This means a non-technical user can do things like:
+
+1. Send `/profile incident`
+2. Ask "Summarize the sev1 blast radius"
+3. Ask "Now turn that into a stakeholder update"
+
+The second and third messages stay in the same session, and the saved profile keeps the team composition stable for that chat.
+
+## Inspect and reset bot sessions
+
+```bash
+go run ./cmd/agentteam sessions list --workdir .
+go run ./cmd/agentteam sessions show --channel telegram --target 12345
+go run ./cmd/agentteam sessions reset --channel telegram --target 12345
+```
 
 Telegram example:
 
